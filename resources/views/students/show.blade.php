@@ -330,6 +330,17 @@
                                             $totalPayments = $student->payments->whereIn('status', ['verified', 'completed'])->sum('total_amount');
                                             $creditBalance = (float)($student->credit_balance ?? 0);
                                             
+                                            // Total payments untuk tahun berjalan (prioritaskan berdasarkan billing ANNUAL jika ada)
+                                            $totalPaymentsCurrentYear = 0;
+                                            if ($annualBilling && isset($annualBilling->id)) {
+                                                $totalPaymentsCurrentYear = $student->payments
+                                                    ->where('billing_record_id', $annualBilling->id)
+                                                    ->whereIn('status', ['verified', 'completed'])
+                                                    ->sum('total_amount');
+                                            } else {
+                                                $totalPaymentsCurrentYear = $creditBalance; // fallback
+                                            }
+                                            
                                             // Calculate previous debt - use same logic as alert
                                             $previousDebt = $effectivePrevDebt; // Use calculated value from alert
                                             
@@ -348,10 +359,9 @@
                                             $months = ['Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember', 
                                                      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni'];
                                             
-                                            // Calculate remaining balance - only for current year obligation
-                                            // Credit balance reduces current year's obligation
+                                            // Remaining balance tahun berjalan mengikuti pembayaran aktual
                                             $currentYearObligation = $effectiveYearly;
-                                            $remainingBalance = max(0, $currentYearObligation - $creditBalance);
+                                            $remainingBalance = max(0, $currentYearObligation - $totalPaymentsCurrentYear);
                                             $monthlyBreakdown = $smartDistribution['monthly_breakdown'] ?? [];
                                         @endphp
                                         
@@ -405,26 +415,21 @@
                                                 $monthlyPaid = 0;
                                                 
                                                 // Calculate payment allocation for this month
-                                                // For current year, only use credit balance (not total payments)
-                                                $availableForCurrentYear = $creditBalance;
-                                                
-                                                // Calculate cumulative required amount up to this month
-                                                $cumulativeRequired = 0;
-                                                for ($i = 0; $i <= $index; $i++) {
-                                                    $cumulativeRequired += $monthlyBreakdown[$months[$i]] ?? 0;
+                                                // Alokasikan pembayaran aktual per bulan (mengikuti breakdown & total dibayar tahun berjalan)
+                                                static $remainingPaymentForYear = null; 
+                                                if ($remainingPaymentForYear === null) {
+                                                    $remainingPaymentForYear = $totalPaymentsCurrentYear;
                                                 }
+                                                $monthlyPaid = min($monthlyRequired, max(0, $remainingPaymentForYear));
+                                                $remainingPaymentForYear = max(0, $remainingPaymentForYear - $monthlyPaid);
                                                 
-                                                // Calculate how much has been paid for previous months
-                                                $previousMonthsPaid = 0;
-                                                for ($i = 0; $i < $index; $i++) {
-                                                    $previousMonthsPaid += $monthlyBreakdown[$months[$i]] ?? 0;
+                                                // Sisa pembayaran kumulatif (konsisten dengan kwitansi)
+                                                static $cumulativeRemainingForYear = null;
+                                                if ($cumulativeRemainingForYear === null) {
+                                                    $cumulativeRemainingForYear = max(0, (float)$previousDebt - min($totalPayments, $previousDebt));
                                                 }
-                                                
-                                                // Calculate payment for this month using credit balance
-                                                $availableForThisMonth = max(0, $availableForCurrentYear - $previousMonthsPaid);
-                                                $monthlyPaid = min($monthlyRequired, $availableForThisMonth);
-                                                
-                                                $monthlyRemaining = max(0, $monthlyRequired - $monthlyPaid);
+                                                $monthlyRemaining = max(0, $cumulativeRemainingForYear + $monthlyRequired - $monthlyPaid);
+                                                $cumulativeRemainingForYear = $monthlyRemaining;
                                                 $isPaid = $monthlyRemaining == 0;
                                             @endphp
                                             <tr class="{{ $isPaid ? 'table-success' : '' }}">
@@ -479,13 +484,17 @@
                                             <td><strong>TOTAL</strong></td>
                                             <td><strong>Rp {{ number_format($totalObligation, 0, ',', '.') }}</strong></td>
                                             <td>
-                                                <span class="badge bg-{{ $remainingBalance > 0 ? 'warning' : 'success' }} amount-badge">
-                                                    Rp {{ number_format($remainingBalance, 0, ',', '.') }}
+                                                @php
+                                                    $debtPaidTotal = min($totalPayments, $previousDebt);
+                                                    $totalRemainingAll = max(0, ($effectiveYearly + $previousDebt) - ($totalPaymentsCurrentYear + $debtPaidTotal));
+                                                @endphp
+                                                <span class="badge bg-{{ $totalRemainingAll > 0 ? 'warning' : 'success' }} amount-badge">
+                                                    Rp {{ number_format($totalRemainingAll, 0, ',', '.') }}
                                                 </span>
                                             </td>
                                             <td>
-                                                <span class="badge bg-{{ $remainingBalance > 0 ? 'warning' : 'success' }} status-badge">
-                                                    {{ $remainingBalance > 0 ? 'BELUM LUNAS' : 'LUNAS' }}
+                                                <span class="badge bg-{{ $totalRemainingAll > 0 ? 'warning' : 'success' }} status-badge">
+                                                    {{ $totalRemainingAll > 0 ? 'BELUM LUNAS' : 'LUNAS' }}
                                                 </span>
                                             </td>
                                             <td>-</td>
