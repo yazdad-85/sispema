@@ -12,6 +12,8 @@ class ActivityPlan extends Model
     protected $fillable = [
         'academic_year_id',
         'category_id',
+        'institution_id',
+        'level',
         'name',
         'start_date',
         'end_date',
@@ -41,6 +43,11 @@ class ActivityPlan extends Model
     public function category()
     {
         return $this->belongsTo(Category::class);
+    }
+
+    public function institution()
+    {
+        return $this->belongsTo(Institution::class);
     }
 
     public function realizations()

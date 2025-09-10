@@ -8,6 +8,7 @@ $baseDir = dirname($vendorDir);
 return array(
     'App\\Console\\Commands\\ProcessExistingSppPayments' => $baseDir . '/app/Console/Commands/ProcessExistingSppPayments.php',
     'App\\Console\\Commands\\UpdateInstitutionStatus' => $baseDir . '/app/Console/Commands/UpdateInstitutionStatus.php',
+    'App\\Console\\Commands\\WipeDataExceptCore' => $baseDir . '/app/Console/Commands/WipeDataExceptCore.php',
     'App\\Console\\Kernel' => $baseDir . '/app/Console/Kernel.php',
     'App\\Exceptions\\Handler' => $baseDir . '/app/Exceptions/Handler.php',
     'App\\Http\\Controllers\\AcademicYearController' => $baseDir . '/app/Http/Controllers/AcademicYearController.php',

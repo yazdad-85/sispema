@@ -8,6 +8,8 @@ use App\Models\ActivityPlan;
 use App\Models\ActivityRealization;
 use App\Models\CashBook;
 use App\Models\AcademicYear;
+use App\Models\Student;
+use App\Models\FeeStructure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -30,8 +32,8 @@ class SppFinancialService
                 throw new \Exception('Tidak ada tahun ajaran aktif');
             }
 
-            // Get or create SPP activity plan for current year
-            $sppPlan = $this->getOrCreateSppPlan($currentAcademicYear, $sppCategory);
+            // Get or create SPP activity plan for current year, grouped by institution + level
+            $sppPlan = $this->getOrCreateSppPlanForPayment($currentAcademicYear, $sppCategory, $payment);
 
             // Create realization for SPP payment
             $realization = $this->createSppRealization($payment, $sppPlan);
@@ -66,13 +68,9 @@ class SppFinancialService
     private function getOrCreateSppCategory(Payment $payment)
     {
         $categoryName = 'Pembayaran SPP';
-        
-        // Add scholarship info if applicable
         if ($payment->student && $payment->student->scholarshipCategory) {
             $categoryName .= ' - ' . $payment->student->scholarshipCategory->name;
         }
-
-        // Add payment method info
         $categoryName .= ' (' . ucfirst($payment->payment_method) . ')';
 
         $category = Category::where('name', $categoryName)
@@ -91,27 +89,58 @@ class SppFinancialService
     }
 
     /**
-     * Get or create SPP activity plan for academic year
+     * Return level label from student class
      */
-    private function getOrCreateSppPlan(AcademicYear $academicYear, Category $category)
+    private function getStudentLevel(Student $student): ?string
     {
-        $planName = 'Penerimaan SPP ' . $academicYear->year_start . '/' . $academicYear->year_end;
+        $class = $student->classRoom; // relation name in project is classRoom
+        if (!$class) return null;
+        return $class->safe_level ?? $class->level ?? null;
+    }
+
+    
+
+    /**
+     * Get or create SPP activity plan for academic year, grouped by institution and level
+     */
+    private function getOrCreateSppPlanForPayment(AcademicYear $academicYear, Category $category, Payment $payment): ActivityPlan
+    {
+        $student = $payment->student()->with(['institution', 'classRoom'])->first();
+        $institution = $student ? $student->institution : null;
+        $level = $student ? ($this->getStudentLevel($student) ?? '-') : '-';
+        $institutionId = $institution ? $institution->id : null;
+        $institutionName = $institution ? $institution->name : 'Lembaga';
+
+        $planName = 'Penerimaan SPP (' . $institutionName . ') (' . $level . ')';
 
         $plan = ActivityPlan::where('academic_year_id', $academicYear->id)
             ->where('category_id', $category->id)
-            ->where('name', 'like', '%Penerimaan SPP%')
+            ->where('institution_id', $institutionId)
+            ->where('level', $level)
             ->first();
 
         if (!$plan) {
+            $budget = $institutionId && $level
+                ? $this->calculatePlanBudget($institutionId, $academicYear->id, $level)
+                : 0;
+
             $plan = ActivityPlan::create([
                 'academic_year_id' => $academicYear->id,
                 'category_id' => $category->id,
+                'institution_id' => $institutionId,
+                'level' => $level,
                 'name' => $planName,
-                'start_date' => $academicYear->year_start . '-07-01', // July 1st
-                'end_date' => $academicYear->year_end . '-06-30', // June 30th
-                'budget_amount' => 0, // Will be updated as payments come in
-                'description' => 'Rencana penerimaan SPP untuk tahun ajaran ' . $academicYear->year_start . '/' . $academicYear->year_end
+                'start_date' => $academicYear->year_start . '-07-01',
+                'end_date' => $academicYear->year_end . '-06-30',
+                'budget_amount' => $budget,
+                'description' => 'Rencana penerimaan SPP ' . $institutionName . ' level ' . $level . ' ' . $academicYear->year_start . '/' . $academicYear->year_end,
             ]);
+        } else {
+            // Keep budget fresh (e.g., setelah penambahan siswa/struktur biaya)
+            if ($plan->institution_id && $plan->level) {
+                $plan->budget_amount = $this->calculatePlanBudget($plan->institution_id, $academicYear->id, $plan->level);
+                $plan->save();
+            }
         }
 
         return $plan;
@@ -132,7 +161,7 @@ class SppFinancialService
             'plan_id' => $plan->id,
             'date' => $payment->payment_date,
             'description' => $description,
-            'transaction_type' => 'credit', // Pemasukan SPP
+            'transaction_type' => 'credit',
             'unit_price' => $payment->total_amount,
             'equivalent_1' => 1,
             'equivalent_2' => 0,
@@ -157,8 +186,8 @@ class SppFinancialService
         return CashBook::addEntry(
             $payment->payment_date,
             $description,
-            0, // debit
-            $payment->total_amount, // credit (pemasukan)
+            0,
+            $payment->total_amount,
             'payment',
             $payment->id
         );
@@ -171,7 +200,7 @@ class SppFinancialService
     {
         $payments = Payment::whereIn('status', ['verified', 'completed'])
             ->whereDoesntHave('cashBookEntries')
-            ->with(['student.scholarshipCategory'])
+            ->with(['student.scholarshipCategory', 'student.classRoom', 'student.institution'])
             ->get();
 
         $processed = 0;
@@ -230,5 +259,66 @@ class SppFinancialService
                 ];
             })
         ];
+    }
+
+    // Expose calculatePlanBudget for other components
+    public function calculatePlanBudget(int $institutionId, int $academicYearId, string $level): float
+    {
+        $students = Student::where('institution_id', $institutionId)
+            ->where('academic_year_id', $academicYearId)
+            ->whereHas('classRoom', function ($q) use ($level) {
+                $q->where('level', $level);
+            })
+            ->with(['scholarshipCategory', 'classRoom'])
+            ->get();
+
+        $total = 0.0;
+        foreach ($students as $s) {
+            $currentLevel = $this->getStudentLevel($s);
+            if (!$currentLevel) continue;
+            $fs = FeeStructure::findByLevel($s->institution_id, $academicYearId, $currentLevel);
+            $yearlyAmount = $fs ? (float)$fs->yearly_amount : 0.0;
+
+            $scholarshipPct = (float) (optional($s->scholarshipCategory)->discount_percentage ?? 0);
+            $categoryName = optional($s->scholarshipCategory)->name;
+            $applies = true;
+            if (in_array($categoryName, ['Alumni', 'Yatim Piatu, Piatu, Yatim'])) {
+                $applies = in_array($currentLevel, ['VII', 'X']);
+            }
+            $discount = $applies ? $yearlyAmount * ($scholarshipPct / 100) : 0;
+            $effectiveYearly = max(0, $yearlyAmount - $discount);
+            $total += $effectiveYearly;
+        }
+        return $total;
+    }
+
+    // Public helper for backfill: fetch or create plan by components
+    public function getSppPlanForBackfill(AcademicYear $academicYear, Category $category, Student $student, string $institutionName, string $level): ?ActivityPlan
+    {
+        $institution = $student->institution;
+        if (!$institution) return null;
+        $institutionId = $institution->id;
+
+        $plan = ActivityPlan::where('academic_year_id', $academicYear->id)
+            ->where('category_id', $category->id)
+            ->where('institution_id', $institutionId)
+            ->where('level', $level)
+            ->first();
+
+        if (!$plan) {
+            $plan = ActivityPlan::create([
+                'academic_year_id' => $academicYear->id,
+                'category_id' => $category->id,
+                'institution_id' => $institutionId,
+                'level' => $level,
+                'name' => 'Penerimaan SPP (' . $institutionName . ') (' . $level . ')',
+                'start_date' => $academicYear->year_start . '-07-01',
+                'end_date' => $academicYear->year_end . '-06-30',
+                'budget_amount' => $this->calculatePlanBudget($institutionId, $academicYear->id, $level),
+                'description' => 'Rencana penerimaan SPP ' . $institutionName . ' level ' . $level . ' ' . $academicYear->year_start . '/' . $academicYear->year_end,
+            ]);
+        }
+
+        return $plan;
     }
 }
