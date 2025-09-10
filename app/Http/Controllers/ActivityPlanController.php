@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\Models\ActivityPlan;
 use App\Models\Category;
 use App\Models\AcademicYear;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class ActivityPlanController extends Controller
 {
@@ -31,6 +32,14 @@ class ActivityPlanController extends Controller
         // Filter by level
         if ($request->filled('level')) {
             $query->where('level', $request->level);
+        }
+
+        // Check if PDF export is requested
+        if ($request->has('export_pdf')) {
+            $activityPlans = $query->orderBy('start_date', 'desc')->get();
+            $pdf = Pdf::loadView('financial.activity-plans.pdf', compact('activityPlans'));
+            $pdf->setPaper('A4', 'landscape');
+            return $pdf->download('rencana-kegiatan-' . date('Y-m-d') . '.pdf');
         }
 
         $perPage = $request->get('per_page', 15);

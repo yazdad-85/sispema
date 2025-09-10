@@ -557,8 +557,8 @@ class StudentPromotionController extends Controller
         $billingRecords = $student->billingRecords()->get();
         $payments = $student->payments()->get();
         
-        $totalBilled = $billingRecords->sum('amount');
-        $totalPaid = $payments->sum('amount');
+        $totalBilled = $billingRecords->sum('total_amount');
+        $totalPaid = $payments->sum('total_amount');
         $outstandingAmount = $totalBilled - $totalPaid;
         
         return [

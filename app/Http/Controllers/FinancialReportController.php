@@ -8,6 +8,7 @@ use App\Models\ActivityRealization;
 use App\Models\CashBook;
 use App\Models\Category;
 use App\Models\AcademicYear;
+use App\Models\Student;
 use Barryvdh\DomPDF\Facade\Pdf;
 
 class FinancialReportController extends Controller
@@ -100,17 +101,57 @@ class FinancialReportController extends Controller
         $pemasukanCategories = Category::pemasukan()->active()->get();
         $pengeluaranCategories = Category::pengeluaran()->active()->get();
 
+        // Perhitungan otomatis untuk neraca
+        $totalPiutang = 0; // Total tagihan SPP yang belum dibayar
+        $totalHutang = 0; // Total hutang yang belum dibayar
+        $totalModal = $currentBalance + ($totalCredit - $totalDebit); // Modal = Kas + Laba Bersih
+        
+        // Hitung hutang jangka pendek dari realisasi yang belum dibayar
+        $unpaidRealizations = ActivityRealization::where('status', 'pending')
+            ->orWhere('status', 'approved')
+            ->where('payment_date', null)
+            ->get();
+        
+        foreach($unpaidRealizations as $realization) {
+            $totalHutang += $realization->amount;
+        }
+        
+        // Hitung modal dari akumulasi laba bersih
+        $totalModal = $currentBalance + ($totalCredit - $totalDebit);
+        
+        // Hitung piutang SPP dari tagihan yang belum dibayar
+        $students = Student::with(['billingRecords' => function($query) use ($request) {
+            if ($request->filled('academic_year_id')) {
+                $query->where('academic_year_id', $request->academic_year_id);
+            }
+        }])->get();
+        
+        foreach($students as $student) {
+            foreach($student->billingRecords as $billing) {
+                $totalObligation = $billing->effectiveYearly; // Total kewajiban tahunan
+                $totalPaid = $student->payments()
+                    ->where('status', 'verified')
+                    ->sum('total_amount');
+                $remaining = $totalObligation - $totalPaid;
+                if($remaining > 0) {
+                    $totalPiutang += $remaining;
+                }
+            }
+        }
+
         if ($request->has('export_pdf')) {
             $pdf = Pdf::loadView('financial.reports.balance-sheet-pdf', compact(
                 'entries', 'totalDebit', 'totalCredit', 'currentBalance',
-                'pemasukanCategories', 'pengeluaranCategories'
+                'pemasukanCategories', 'pengeluaranCategories',
+                'totalPiutang', 'totalHutang', 'totalModal'
             ));
             return $pdf->download('neraca-keuangan-' . date('Y-m-d') . '.pdf');
         }
 
         return view('financial.reports.balance-sheet', compact(
             'entries', 'totalDebit', 'totalCredit', 'currentBalance',
-            'pemasukanCategories', 'pengeluaranCategories'
+            'pemasukanCategories', 'pengeluaranCategories',
+            'totalPiutang', 'totalHutang', 'totalModal'
         ));
     }
 }

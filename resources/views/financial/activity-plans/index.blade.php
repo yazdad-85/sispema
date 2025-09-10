@@ -9,9 +9,14 @@
                     <h3 class="card-title mb-0">
                         <i class="fas fa-clipboard-list me-2"></i>Rencana Kegiatan
                     </h3>
-                    <a href="{{ route('activity-plans.create') }}" class="btn btn-primary">
-                        <i class="fas fa-plus me-1"></i>Tambah Rencana
-                    </a>
+                    <div class="btn-group">
+                        <a href="{{ route('activity-plans.index', ['export_pdf' => 1] + request()->query()) }}" class="btn btn-success">
+                            <i class="fas fa-file-pdf me-1"></i>Export PDF
+                        </a>
+                        <a href="{{ route('activity-plans.create') }}" class="btn btn-primary">
+                            <i class="fas fa-plus me-1"></i>Tambah Rencana
+                        </a>
+                    </div>
                 </div>
                 
                 <div class="card-body">
@@ -77,13 +82,20 @@
                             </div>
                         </div>
                         <div class="row mt-3">
-                            <div class="col-12 d-flex justify-content-end">
-                                <button type="submit" class="btn btn-outline-primary me-2">
-                                    <i class="fas fa-search me-1"></i>Filter
-                                </button>
-                                <a href="{{ route('activity-plans.index') }}" class="btn btn-outline-secondary">
-                                    <i class="fas fa-times me-1"></i>Reset
-                                </a>
+                            <div class="col-12 d-flex justify-content-between">
+                                <div>
+                                    <button type="submit" name="export_pdf" value="1" class="btn btn-success me-2">
+                                        <i class="fas fa-file-pdf me-1"></i>Export PDF
+                                    </button>
+                                </div>
+                                <div>
+                                    <button type="submit" class="btn btn-outline-primary me-2">
+                                        <i class="fas fa-search me-1"></i>Filter
+                                    </button>
+                                    <a href="{{ route('activity-plans.index') }}" class="btn btn-outline-secondary">
+                                        <i class="fas fa-times me-1"></i>Reset
+                                    </a>
+                                </div>
                             </div>
                         </div>
                     </form>

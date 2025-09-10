@@ -249,4 +249,45 @@
         </div>
     </div>
 </div>
+
+<!-- Signature Section -->
+<div class="container-fluid mt-5">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    @php
+                        $appSetting = \App\Models\AppSetting::first();
+                        $cityName = $appSetting ? $appSetting->app_city : 'Kota';
+                    @endphp
+                    
+                    <div class="row">
+                        <!-- Baris Pertama: Bendahara (kiri) dan Admin Sistem (kanan) -->
+                        <div class="col-md-6 text-center mb-4">
+                            <p style="margin: 0 0 40px 0; font-size: 14px;">Bendahara,</p>
+                            <div style="border-bottom: 1px solid #000; height: 40px; margin-bottom: 5px; width: 200px; margin-left: auto; margin-right: auto;"></div>
+                            <p style="margin: 0; font-size: 12px; font-weight: bold;">Bendahara Sekolah</p>
+                        </div>
+                        
+                        <div class="col-md-6 text-center mb-4">
+                            <p style="margin: 0 0 10px 0; font-size: 12px; color: #666;">{{ $cityName }}, {{ date('d F Y') }}</p>
+                            <p style="margin: 0 0 40px 0; font-size: 14px;">Dibuat oleh,</p>
+                            <div style="border-bottom: 1px solid #000; height: 40px; margin-bottom: 5px; width: 200px; margin-left: auto; margin-right: auto;"></div>
+                            <p style="margin: 0; font-size: 12px; font-weight: bold;">Admin Sistem</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Baris Kedua: Mengetahui (tengah) -->
+                    <div class="row">
+                        <div class="col-12 text-center">
+                            <p style="margin: 0 0 40px 0; font-size: 14px;">Mengetahui,</p>
+                            <div style="border-bottom: 1px solid #000; height: 40px; margin-bottom: 5px; width: 250px; margin-left: auto; margin-right: auto;"></div>
+                            <p style="margin: 0; font-size: 12px; font-weight: bold;">Kepala Sekolah</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 @endsection

@@ -282,7 +282,7 @@ class ReportController extends Controller
                     });
                 })->whereHas('student.classRoom', function($cq) use ($className) {
                     $cq->where('class_name', $className);
-                })->sum('amount');
+                })->sum('total_amount');
                 
                 $summary[$institutionName]['classes'][$className]['total_billed'] = $classBilled;
                 $totalBilled += $classBilled;

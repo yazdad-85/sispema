@@ -34,28 +34,6 @@
             color: #000;
             font-size: 11px;
         }
-        .summary {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 20px;
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 5px;
-        }
-        .summary-item {
-            text-align: center;
-        }
-        .summary-item h3 {
-            margin: 0;
-            font-size: 14px;
-            color: #666;
-        }
-        .summary-item p {
-            margin: 5px 0 0 0;
-            font-size: 16px;
-            font-weight: bold;
-            color: #333;
-        }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -138,6 +116,13 @@
             color: #000;
             border-top: 1px solid #000;
             padding-top: 8px;
+        }
+        .no-break {
+            page-break-inside: avoid;
+        }
+        .signature-section {
+            margin-top: 30px;
+            page-break-inside: avoid;
         }
     </style>
 </head>
@@ -269,7 +254,43 @@
         </tbody>
     </table>
 
-    <div class="footer">
+    @php
+        $appSetting = \App\Models\AppSetting::first();
+        $cityName = $appSetting ? $appSetting->app_city : 'Kota';
+    @endphp
+
+    <div class="signature-section no-break">
+        <!-- Baris Pertama: Bendahara (kiri) dan Admin Sistem (kanan) -->
+        <table style="width: 100%; border: none; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">
+            <tr>
+                <td style="width: 50%; border: none; padding: 0; text-align: center; vertical-align: top;">
+                    <p style="margin: 0 0 10px 0; font-size: 10px;">&nbsp;</p>
+                    <p style="margin: 0 0 40px 0; font-size: 11px;">Bendahara,</p>
+                    <div style="border-bottom: 1px solid #000; height: 40px; margin-bottom: 5px; width: 150px; margin-left: auto; margin-right: auto;"></div>
+                    <p style="margin: 0; font-size: 10px; font-weight: bold;">Bendahara Sekolah</p>
+                </td>
+                <td style="width: 50%; border: none; padding: 0; text-align: center; vertical-align: top;">
+                    <p style="margin: 0 0 10px 0; font-size: 10px;">{{ $cityName }}, {{ date('d F Y') }}</p>
+                    <p style="margin: 0 0 40px 0; font-size: 11px;">Dibuat oleh,</p>
+                    <div style="border-bottom: 1px solid #000; height: 40px; margin-bottom: 5px; width: 150px; margin-left: auto; margin-right: auto;"></div>
+                    <p style="margin: 0; font-size: 10px; font-weight: bold;">Admin Sistem</p>
+                </td>
+            </tr>
+        </table>
+        
+        <!-- Baris Kedua: Mengetahui (tengah) -->
+        <table style="width: 100%; border: none; border-collapse: separate; border-spacing: 0;">
+            <tr>
+                <td style="width: 100%; border: none; padding: 0; text-align: center; vertical-align: top;">
+                    <p style="margin: 0 0 40px 0; font-size: 11px;">Mengetahui,</p>
+                    <div style="border-bottom: 1px solid #000; height: 40px; margin-bottom: 5px; width: 200px; margin-left: auto; margin-right: auto;"></div>
+                    <p style="margin: 0; font-size: 10px; font-weight: bold;">Kepala Sekolah</p>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="footer no-break">
         <p>Dicetak pada {{ date('d/m/Y H:i:s') }} | Halaman 1</p>
     </div>
 </body>
