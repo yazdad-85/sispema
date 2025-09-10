@@ -1,0 +1,14 @@
+# Crontab entries for SPP YASMU Application
+# Add these to your server's crontab
+
+# Daily database backup at 02:00 WIB
+0 2 * * * /usr/bin/bash /path/to/spp-yasmu-app/backup_database.sh >> /var/log/spp-yasmu-backup.log 2>&1
+
+# Weekly log rotation
+0 3 * * 0 /usr/bin/find /path/to/spp-yasmu-app/storage/logs -name "*.log" -mtime +7 -delete
+
+# Monthly system maintenance
+0 4 1 * * /usr/bin/php /path/to/spp-yasmu-app/artisan queue:restart
+
+# Health check every hour
+0 * * * * /usr/bin/curl -f http://your-domain.com/health || echo "Site is down" | mail -s "SPP YASMU Health Check Failed" admin@yasmu.org
