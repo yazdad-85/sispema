@@ -508,23 +508,40 @@ class StudentController extends Controller
         return view('students.import-template', compact('institutions', 'academicYears', 'classes', 'scholarshipCategories'));
     }
 
-    public function downloadTemplate()
+    public function downloadTemplate(Request $request)
     {
         $user = Auth::user();
+        
+        // Validasi parameter
+        $request->validate([
+            'academic_year_id' => 'required|exists:academic_years,id',
+            'institution_id' => 'required|exists:institutions,id'
+        ]);
+        
+        $academicYearId = $request->academic_year_id;
+        $institutionId = $request->institution_id;
         
         // Data untuk template - hanya yang aktif
         $academicYears = AcademicYear::where('status', 'active')->get();
         $scholarshipCategories = ScholarshipCategory::where('is_active', true)->get();
         
-        if ($user->isSuperAdmin()) {
-            $institutions = Institution::where('is_active', true)->get();
-            $classes = ClassModel::where('is_active', true)->get();
-        } else {
-            $institutions = $user->institutions->where('is_active', true);
-            $classes = ClassModel::whereIn('institution_id', $institutions->pluck('id'))
-                ->where('is_active', true)
-                ->get();
+        // Filter berdasarkan parameter yang dipilih
+        $selectedAcademicYear = AcademicYear::findOrFail($academicYearId);
+        $selectedInstitution = Institution::findOrFail($institutionId);
+        
+        // Validasi akses untuk staff/kasir
+        if (!$user->isSuperAdmin()) {
+            $userInstitutionIds = $user->institutions->pluck('id')->toArray();
+            if (!in_array($institutionId, $userInstitutionIds)) {
+                abort(403, 'Anda tidak memiliki akses ke lembaga ini.');
+            }
         }
+        
+        // Data lembaga dan kelas berdasarkan pilihan
+        $institutions = collect([$selectedInstitution]);
+        $classes = ClassModel::where('institution_id', $institutionId)
+            ->where('is_active', true)
+            ->get();
 
         // Buat Excel dengan PhpSpreadsheet
         $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
@@ -555,12 +572,11 @@ class StudentController extends Controller
             $col++;
         }
         
-        // Prefill Lembaga ID untuk admin lembaga
-        if ($user->isSuperAdmin()) {
-            // Isi 100 baris contoh
-            for ($row = 2; $row <= 201; $row++) {
-                $sheet->setCellValue('C' . $row, $institutions->first()->id);
-            }
+        // Prefill data berdasarkan pilihan
+        // Isi 100 baris contoh dengan data yang dipilih
+        for ($row = 2; $row <= 101; $row++) {
+            $sheet->setCellValue('C' . $row, $selectedInstitution->id); // Lembaga ID
+            $sheet->setCellValue('D' . $row, $selectedAcademicYear->id); // Tahun Ajaran ID
         }
         
         // Tidak lagi memakai dropdown Data Validation untuk kolom ID agar semua bisa diinput bebas
@@ -573,7 +589,9 @@ class StudentController extends Controller
         
         // Output Excel
         $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-        $filename = 'template_import_siswa.xlsx';
+        $filename = 'template_import_siswa_' . $selectedInstitution->name . '_' . $selectedAcademicYear->year_start . '-' . $selectedAcademicYear->year_end . '.xlsx';
+        // Clean filename dari karakter yang tidak valid
+        $filename = preg_replace('/[^a-zA-Z0-9._-]/', '_', $filename);
         
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment;filename="' . $filename . '"');

@@ -16,20 +16,53 @@
                                     <h5 class="card-title">Download Template Excel</h5>
                                 </div>
                                 <div class="card-body">
-                                    <p>Download template Excel yang sudah disesuaikan dengan data lembaga Anda:</p>
+                                    <p>Pilih Tahun Ajaran dan Lembaga untuk download template Excel yang sudah disesuaikan:</p>
                                     
-                                    <div class="alert alert-info">
-                                        <strong>Template ini sudah berisi:</strong>
-                                        <ul class="mb-0 mt-2">
-                                            <li>Data lembaga dan kelas yang tersedia</li>
-                                            <li>Petunjuk pengisian yang lengkap</li>
-                                            <li>Data referensi untuk validasi</li>
-                                        </ul>
-                                    </div>
-                                    
-                                    <a href="{{ route('students.download-template') }}" class="btn btn-success btn-lg">
-                                        <i class="fas fa-download"></i> Download Template Excel
-                                    </a>
+                                    <form id="templateForm">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="form-group">
+                                                    <label for="academic_year_id">Tahun Ajaran *</label>
+                                                    <select class="form-control" id="academic_year_id" name="academic_year_id" required>
+                                                        <option value="">-- Pilih Tahun Ajaran --</option>
+                                                        @foreach($academicYears as $year)
+                                                            <option value="{{ $year->id }}" 
+                                                                    data-year-start="{{ $year->year_start }}" 
+                                                                    data-year-end="{{ $year->year_end }}">
+                                                                {{ $year->year_start }}/{{ $year->year_end }}
+                                                            </option>
+                                                        @endforeach
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="form-group">
+                                                    <label for="institution_id">Nama Lembaga *</label>
+                                                    <select class="form-control" id="institution_id" name="institution_id" required>
+                                                        <option value="">-- Pilih Lembaga --</option>
+                                                        @foreach($institutions as $institution)
+                                                            <option value="{{ $institution->id }}">
+                                                                {{ $institution->name }}
+                                                            </option>
+                                                        @endforeach
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="alert alert-info">
+                                            <strong>Template akan berisi:</strong>
+                                            <ul class="mb-0 mt-2">
+                                                <li>Data lembaga dan kelas yang dipilih</li>
+                                                <li>Petunjuk pengisian yang lengkap</li>
+                                                <li>Data referensi untuk validasi</li>
+                                            </ul>
+                                        </div>
+                                        
+                                        <button type="submit" class="btn btn-success btn-lg" id="downloadBtn" disabled>
+                                            <i class="fas fa-download"></i> Download Template Excel
+                                        </button>
+                                    </form>
                                 </div>
                             </div>
                         </div>
@@ -166,3 +199,46 @@
     </div>
 </div>
 @endsection
+
+@push('scripts')
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const academicYearSelect = document.getElementById('academic_year_id');
+    const institutionSelect = document.getElementById('institution_id');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const templateForm = document.getElementById('templateForm');
+    
+    function updateDownloadButton() {
+        const academicYearId = academicYearSelect.value;
+        const institutionId = institutionSelect.value;
+        
+        if (academicYearId && institutionId) {
+            downloadBtn.disabled = false;
+            downloadBtn.innerHTML = '<i class="fas fa-download"></i> Download Template Excel';
+        } else {
+            downloadBtn.disabled = true;
+            downloadBtn.innerHTML = '<i class="fas fa-download"></i> Pilih Tahun Ajaran & Lembaga';
+        }
+    }
+    
+    academicYearSelect.addEventListener('change', updateDownloadButton);
+    institutionSelect.addEventListener('change', updateDownloadButton);
+    
+    templateForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const academicYearId = academicYearSelect.value;
+        const institutionId = institutionSelect.value;
+        
+        if (academicYearId && institutionId) {
+            // Redirect to download with parameters
+            const downloadUrl = '{{ route("students.download-template") }}?academic_year_id=' + academicYearId + '&institution_id=' + institutionId;
+            window.location.href = downloadUrl;
+        }
+    });
+    
+    // Initialize button state
+    updateDownloadButton();
+});
+</script>
+@endpush
