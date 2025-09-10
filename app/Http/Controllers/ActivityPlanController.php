@@ -11,7 +11,7 @@ class ActivityPlanController extends Controller
 {
     public function index(Request $request)
     {
-        $query = ActivityPlan::with(['academicYear', 'category']);
+        $query = ActivityPlan::with(['academicYear', 'category', 'institution']);
 
         // Filter by academic year
         if ($request->filled('academic_year_id')) {
@@ -23,7 +23,20 @@ class ActivityPlanController extends Controller
             $query->where('category_id', $request->category_id);
         }
 
-        $activityPlans = $query->orderBy('start_date', 'desc')->paginate(15);
+        // Filter by institution
+        if ($request->filled('institution_id')) {
+            $query->where('institution_id', $request->institution_id);
+        }
+
+        // Filter by level
+        if ($request->filled('level')) {
+            $query->where('level', $request->level);
+        }
+
+        $perPage = $request->get('per_page', 15);
+        $perPage = in_array($perPage, [15, 25, 50, 100]) ? $perPage : 15;
+        
+        $activityPlans = $query->orderBy('start_date', 'desc')->paginate($perPage);
         
         $academicYears = AcademicYear::where('status', 'active')->get();
         $categories = Category::active()->get();

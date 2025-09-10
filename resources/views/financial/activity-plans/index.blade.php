@@ -18,7 +18,7 @@
                     <!-- Filter Form -->
                     <form method="GET" class="mb-4">
                         <div class="row g-3">
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label for="academic_year_id" class="form-label">Tahun Ajaran</label>
                                 <select class="form-select" id="academic_year_id" name="academic_year_id">
                                     <option value="">Semua Tahun Ajaran</option>
@@ -29,7 +29,7 @@
                                     @endforeach
                                 </select>
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label for="category_id" class="form-label">Kategori</label>
                                 <select class="form-select" id="category_id" name="category_id">
                                     <option value="">Semua Kategori</option>
@@ -40,7 +40,44 @@
                                     @endforeach
                                 </select>
                             </div>
-                            <div class="col-md-4 d-flex align-items-end">
+                            <div class="col-md-2">
+                                <label for="institution_id" class="form-label">Lembaga</label>
+                                <select class="form-select" id="institution_id" name="institution_id">
+                                    <option value="">Semua Lembaga</option>
+                                    @php
+                                        $institutions = \App\Models\Institution::where('is_active', true)->get();
+                                    @endphp
+                                    @foreach($institutions as $institution)
+                                        <option value="{{ $institution->id }}" {{ request('institution_id') == $institution->id ? 'selected' : '' }}>
+                                            {{ $institution->name }}
+                                        </option>
+                                    @endforeach
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="level" class="form-label">Level</label>
+                                <select class="form-select" id="level" name="level">
+                                    <option value="">Semua Level</option>
+                                    <option value="VII" {{ request('level') == 'VII' ? 'selected' : '' }}>VII</option>
+                                    <option value="VIII" {{ request('level') == 'VIII' ? 'selected' : '' }}>VIII</option>
+                                    <option value="IX" {{ request('level') == 'IX' ? 'selected' : '' }}>IX</option>
+                                    <option value="X" {{ request('level') == 'X' ? 'selected' : '' }}>X</option>
+                                    <option value="XI" {{ request('level') == 'XI' ? 'selected' : '' }}>XI</option>
+                                    <option value="XII" {{ request('level') == 'XII' ? 'selected' : '' }}>XII</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="per_page" class="form-label">Per Halaman</label>
+                                <select class="form-select" id="per_page" name="per_page">
+                                    <option value="15" {{ request('per_page') == '15' ? 'selected' : '' }}>15</option>
+                                    <option value="25" {{ request('per_page') == '25' ? 'selected' : '' }}>25</option>
+                                    <option value="50" {{ request('per_page') == '50' ? 'selected' : '' }}>50</option>
+                                    <option value="100" {{ request('per_page') == '100' ? 'selected' : '' }}>100</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-12 d-flex justify-content-end">
                                 <button type="submit" class="btn btn-outline-primary me-2">
                                     <i class="fas fa-search me-1"></i>Filter
                                 </button>
@@ -65,6 +102,8 @@
                                     <th>No</th>
                                     <th>Nama Kegiatan</th>
                                     <th>Tahun Ajaran</th>
+                                    <th>Lembaga</th>
+                                    <th>Level</th>
                                     <th>Kategori</th>
                                     <th>Budget</th>
                                     <th>Realisasi</th>
@@ -84,6 +123,20 @@
                                         @endif
                                     </td>
                                     <td>{{ $plan->academicYear->year_start }}/{{ $plan->academicYear->year_end }}</td>
+                                    <td>
+                                        @if($plan->institution)
+                                            <span class="badge bg-info">{{ $plan->institution->name }}</span>
+                                        @else
+                                            <span class="text-muted">-</span>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if($plan->level)
+                                            <span class="badge bg-secondary">{{ $plan->level }}</span>
+                                        @else
+                                            <span class="text-muted">-</span>
+                                        @endif
+                                    </td>
                                     <td>
                                         <span class="badge {{ $plan->category->type === 'pemasukan' ? 'bg-success' : 'bg-warning' }}">
                                             {{ $plan->category->name }}
@@ -124,7 +177,7 @@
                                 </tr>
                                 @empty
                                 <tr>
-                                    <td colspan="9" class="text-center py-4">
+                                    <td colspan="11" class="text-center py-4">
                                         <i class="fas fa-clipboard-list fa-3x text-muted mb-3"></i>
                                         <p class="text-muted">Belum ada rencana kegiatan</p>
                                         <a href="{{ route('activity-plans.create') }}" class="btn btn-primary">
@@ -138,8 +191,14 @@
                     </div>
 
                     @if($activityPlans->hasPages())
-                        <div class="d-flex justify-content-center">
-                            {{ $activityPlans->links() }}
+                        <div class="d-flex justify-content-between align-items-center mt-4">
+                            <div class="text-muted">
+                                Menampilkan {{ $activityPlans->firstItem() }} sampai {{ $activityPlans->lastItem() }} 
+                                dari {{ $activityPlans->total() }} data
+                            </div>
+                            <div>
+                                {{ $activityPlans->appends(request()->query())->links() }}
+                            </div>
                         </div>
                     @endif
                 </div>
