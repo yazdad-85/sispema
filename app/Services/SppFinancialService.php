@@ -169,7 +169,7 @@ class SppFinancialService
      */
     public function processAllExistingPayments()
     {
-        $payments = Payment::where('status', 'completed')
+        $payments = Payment::whereIn('status', ['verified', 'completed'])
             ->whereDoesntHave('cashBookEntries')
             ->with(['student.scholarshipCategory'])
             ->get();
