@@ -280,12 +280,34 @@
         ← Kembali
     </a>
 
+    <!-- Filter Form -->
+    <div class="mb-4">
+        <form method="GET" class="d-flex gap-2 align-items-end">
+            <div>
+                <label for="academic_year_id" class="form-label">Filter Tahun Ajaran:</label>
+                <select name="academic_year_id" id="academic_year_id" class="form-select" onchange="this.form.submit()">
+                    @foreach($academicYears as $year)
+                        <option value="{{ $year->id }}" {{ $selectedAcademicYear && $selectedAcademicYear->id == $year->id ? 'selected' : '' }}>
+                            {{ $year->name }}
+                        </option>
+                    @endforeach
+                </select>
+            </div>
+            <div>
+                <a href="{{ route('payments.receipt', $payment) }}" class="btn btn-secondary">
+                    <i class="fas fa-times"></i> Reset
+                </a>
+            </div>
+        </form>
+    </div>
+
     <div class="receipt-container">
         <!-- Header -->
         <div class="header">
             <h1>BUKTI PEMBAYARAN BIAYA PENDIDIKAN<br>(MTS / MA / SMP / SMA / SMK) YASMU</h1>
             <div class="receipt-number">
                 Kuitansi No.: {{ $payment->receipt_number ?? 'N/A' }}<br>
+                Tahun Ajaran: {{ $selectedAcademicYear->name ?? $payment->student->academicYear->name ?? '-' }}<br>
                 Kelas: {{ $payment->student->classRoom->class_name ?? '-' }}<br>
                 No. Induk: {{ $payment->student->nis ?? '-' }}
             </div>
@@ -366,9 +388,13 @@
                                 'MARET' => 'Maret', 'APRIL' => 'April', 'MEI' => 'Mei', 'JUNI' => 'Juni',
                             ];
                             
-                            // Get total payments for this billing record
+                            // Get total payments for this billing record (only for current academic year)
+                            $currentAcademicYearId = $payment->student->academic_year_id;
                             $totalPayments = \App\Models\Payment::where('student_id', $payment->student_id)
                                 ->where('billing_record_id', $payment->billing_record_id)
+                                ->whereHas('billingRecord.feeStructure', function($query) use ($currentAcademicYearId) {
+                                    $query->where('academic_year_id', $currentAcademicYearId);
+                                })
                                 ->sum('total_amount');
                             
                             // Get previous debt from student record with scholarship adjustments for starting level (VII/X)
@@ -395,12 +421,43 @@
                                 }
                             }
                             
+                            // Check for excess payment from previous year (same logic as detail page)
+                            $creditBalance = $payment->student->credit_balance ?? 0;
+                            $creditYear = $payment->student->credit_balance_year ?? '';
+                            if ($payment->student->academicYear) {
+                                $prevStart = $payment->student->academicYear->year_start - 1;
+                                $prevHyphenEx = $prevStart . '-' . ($prevStart + 1);
+                                $prevSlashEx  = $prevStart . '/' . ($prevStart + 1);
+                                $totalBilledPrevEx = $payment->student->billingRecords
+                                    ->whereIn('origin_year', [$prevHyphenEx, $prevSlashEx])
+                                    ->filter(function($br){
+                                        return stripos($br->notes ?? '', 'Excess Payment Transfer') === false;
+                                    })
+                                    ->sum(function($br){ return (float)$br->amount; });
+                                $totalPaidPrevEx = $payment->student->payments
+                                    ->whereIn('status', ['verified', 'completed'])
+                                    ->filter(function($p) use ($prevHyphenEx, $prevSlashEx, $payment){
+                                        $br = $payment->student->billingRecords->firstWhere('id', $p->billing_record_id);
+                                        if (!$br) return false;
+                                        return in_array($br->origin_year, [$prevHyphenEx, $prevSlashEx]);
+                                    })
+                                    ->sum('total_amount');
+                                $computedExcess = max(0, (float)$totalPaidPrevEx - (float)$totalBilledPrevEx);
+                                if ($computedExcess > 0) {
+                                    // If there's excess payment, previous debt should be 0 and show as credit
+                                    $previousDebt = 0;
+                                    $creditBalance = max($creditBalance, $computedExcess);
+                                    $creditYear = $prevStart . '/' . ($prevStart + 1);
+                                }
+                            }
+                            
                             // Hitung alokasi pembayaran per bulan menggunakan nominal smart distribution
                             $monthlyData = [];
                             $remainingPayment = $totalPayments;
                             $cumulativeRemaining = 0; // Track cumulative remaining balance
+                            $remainingCredit = $creditBalance; // Track remaining credit balance
                             
-                            // First, allocate to previous debt
+                            // First, allocate to previous debt (only if no excess payment)
                             if ($previousDebt > 0) {
                                 $paymentForPreviousDebt = min($remainingPayment, $previousDebt);
                                 $remainingPayment -= $paymentForPreviousDebt;
@@ -413,10 +470,18 @@
                                 $monthlyRequired = $key ? (float)($breakdown[$key] ?? 0) : 0;
                                 $monthlyPaid = 0;
                                 
+                                // First apply actual payments
                                 if ($remainingPayment > 0) {
                                     $paymentForThisMonth = min($remainingPayment, $monthlyRequired);
                                     $monthlyPaid = $paymentForThisMonth;
                                     $remainingPayment -= $paymentForThisMonth;
+                                }
+                                
+                                // Then apply credit balance if still needed
+                                if ($monthlyPaid < $monthlyRequired && $remainingCredit > 0) {
+                                    $creditForThisMonth = min($remainingCredit, $monthlyRequired - $monthlyPaid);
+                                    $monthlyPaid += $creditForThisMonth;
+                                    $remainingCredit -= $creditForThisMonth;
                                 }
                                 
                                 // Calculate remaining for this month (cumulative)
@@ -432,14 +497,26 @@
                             }
                         @endphp
                         
+                        {{-- Kelebihan Bayar hanya tampil jika ini adalah tahun ajaran baru (bukan tahun pembayaran asli) --}}
+                        @if($creditBalance > 0 && $payment->student->academic_year_id != $payment->billingRecord->feeStructure->academic_year_id)
+                        <!-- Kelebihan Bayar -->
+                        <tr style="background-color: #d1ecf1;">
+                            <td class="month"><strong>KELEBIHAN BAYAR ({{ $creditYear }})</strong></td>
+                            <td class="amount">{{ number_format($creditBalance, 0, ',', '.') }}</td>
+                            <td class="amount">{{ number_format($creditBalance, 0, ',', '.') }}</td>
+                            <td class="amount">{{ number_format($creditBalance, 0, ',', '.') }}</td>
+                            <td class="status">KREDIT</td>
+                        </tr>
+                        @endif
+                        
                         @if($previousDebt > 0)
                         <!-- Kekurangan Sebelumnya -->
                         @php
                             $paymentForPreviousDebt = min($totalPayments, $previousDebt);
                             $previousDebtRemaining = $previousDebt - $paymentForPreviousDebt;
                         @endphp
-                        <tr>
-                            <td class="month">KEKURANGAN SEBELUMNYA ({{ $previousDebtYear }})</td>
+                        <tr style="background-color: #fff3cd;">
+                            <td class="month"><strong>KEKURANGAN SEBELUMNYA ({{ $previousDebtYear }})</strong></td>
                             <td class="amount">{{ number_format($previousDebt, 0, ',', '.') }}</td>
                             <td class="amount">
                                 @if($paymentForPreviousDebt > 0)
@@ -508,10 +585,20 @@
                     </thead>
                     <tbody>
                         @php
+                            // Show payments for current academic year + excess payment entry if exists
                             $paymentHistory = \App\Models\Payment::where('student_id', $payment->student_id)
                                 ->where('billing_record_id', $payment->billing_record_id)
+                                ->whereHas('billingRecord.feeStructure', function($query) use ($currentAcademicYearId) {
+                                    $query->where('academic_year_id', $currentAcademicYearId);
+                                })
                                 ->orderBy('payment_date')
                                 ->get();
+                            
+                            // Add excess payment as a virtual transaction entry if it exists and there's computed excess
+                            $hasExcessEntry = false;
+                            if ($creditBalance > 0 && isset($computedExcess) && $computedExcess > 0) {
+                                $hasExcessEntry = true;
+                            }
                         @endphp
                         
                         @foreach($paymentHistory as $index => $histPayment)
@@ -542,10 +629,23 @@
                             </tr>
                         @endforeach
                         
+                        @if($hasExcessEntry)
+                        <!-- Excess Payment Entry -->
+                        <tr style="background-color: #d1ecf1;">
+                            <td class="no">{{ $paymentHistory->count() + 1 }}</td>
+                            <td class="date">{{ date('d-M-y') }}</td>
+                            <td class="amount">{{ number_format($creditBalance, 0, ',', '.') }}</td>
+                            <td class="status">
+                                <span class="badge bg-info">KREDIT</span>
+                            </td>
+                            <td class="notes">Kelebihan bayar akan dibayarkan di tahun ajaran baru</td>
+                        </tr>
+                        @endif
+                        
                         <!-- Total Row -->
                         <tr class="total-row">
                             <td colspan="2"><strong>TOTAL BAYAR</strong></td>
-                            <td class="amount"><strong>{{ number_format($paymentHistory->sum('total_amount'), 0, ',', '.') }}</strong></td>
+                            <td class="amount"><strong>{{ number_format($paymentHistory->sum('total_amount') + ($hasExcessEntry ? $creditBalance : 0), 0, ',', '.') }}</strong></td>
                             <td></td>
                             <td></td>
                         </tr>

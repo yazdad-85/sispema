@@ -486,8 +486,24 @@ class FeeStructureController extends Controller
                 ->first();
             
             if (!$targetClass) {
-                $skipped[] = "Tidak ada kelas level {$level} di tahun ajaran target";
-                continue;
+                // Buat kelas baru jika belum ada
+                $targetClass = ClassModel::create([
+                    'class_name' => $level,
+                    'institution_id' => $request->institution_id,
+                    'academic_year_id' => $request->target_academic_year_id,
+                    'level' => $level,
+                    'grade_level' => $level,
+                    'capacity' => 40,
+                    'is_active' => true,
+                    'is_graduated_class' => false
+                ]);
+                
+                \Log::info('Created missing class for fee structure copy', [
+                    'class_name' => $level,
+                    'institution_id' => $request->institution_id,
+                    'academic_year_id' => $request->target_academic_year_id,
+                    'level' => $level
+                ]);
             }
             
             FeeStructure::create([

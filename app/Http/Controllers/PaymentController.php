@@ -132,17 +132,22 @@ class PaymentController extends Controller
 
             \Log::info('Payment created successfully', ['payment' => $payment->toArray()]);
 
-            // Update billing record remaining balance
-            $billingRecord->update([
-                'remaining_balance' => max(0, $billingRecord->remaining_balance - $request->total_amount)
-            ]);
+            // Update billing record remaining balance only for verified/completed
+            if (in_array($paymentStatus, [Payment::STATUS_VERIFIED, Payment::STATUS_COMPLETED])) {
+                $billingRecord->update([
+                    'remaining_balance' => max(0, $billingRecord->remaining_balance - $request->total_amount)
+                ]);
+            }
 
             \Log::info('Billing record updated', ['new_remaining_balance' => $billingRecord->remaining_balance]);
 
             // Process SPP financial integration
             try {
-                $sppFinancialService = new SppFinancialService();
-                $sppFinancialService->processSppPayment($payment);
+                // Only process financials for verified/completed payments
+                if (in_array($payment->status, [Payment::STATUS_VERIFIED, Payment::STATUS_COMPLETED])) {
+                    $sppFinancialService = new SppFinancialService();
+                    $sppFinancialService->processSppPayment($payment);
+                }
             } catch (\Exception $e) {
                 \Log::error('SPP financial integration failed', [
                     'payment_id' => $payment->id,
@@ -332,6 +337,17 @@ class PaymentController extends Controller
                         'remaining_balance' => max(0, $payment->billingRecord->remaining_balance - $payment->total_amount)
                     ]);
                 }
+
+                // Trigger financial processing now that payment is verified
+                try {
+                    $sppFinancialService = new \App\Services\SppFinancialService();
+                    $sppFinancialService->processSppPayment($payment);
+                } catch (\Exception $e) {
+                    \Log::error('Failed processing financials on verify', [
+                        'payment_id' => $payment->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
             }
             
             // If payment is failed, restore billing record (if it was previously updated)
@@ -351,11 +367,18 @@ class PaymentController extends Controller
         }
     }
 
-    public function receipt(Payment $payment)
+    public function receipt(Payment $payment, Request $request)
     {
         $payment->load(['student.institution', 'student.classRoom', 'billingRecord']);
         
-        return view('payments.receipt', compact('payment'));
+        // Get academic years for dropdown
+        $academicYears = \App\Models\AcademicYear::orderBy('year_start', 'desc')->get();
+        
+        // Get selected academic year (default to payment's academic year)
+        $selectedAcademicYearId = $request->get('academic_year_id', $payment->student->academic_year_id);
+        $selectedAcademicYear = \App\Models\AcademicYear::find($selectedAcademicYearId);
+        
+        return view('payments.receipt', compact('payment', 'academicYears', 'selectedAcademicYear'));
     }
 
     public function import()
@@ -508,7 +531,7 @@ class PaymentController extends Controller
                     }
                     
                     // Create payment
-                    Payment::create([
+                    $payment = Payment::create([
                         'student_id' => $student->id,
                         'billing_record_id' => $billingRecord->id,
                         'kasir_id' => auth()->id(), // Set kasir_id to current user
@@ -520,10 +543,12 @@ class PaymentController extends Controller
                         'receipt_number' => 'RCP-' . date('Ymd') . '-' . str_pad(Payment::count() + 1, 4, '0', STR_PAD_LEFT),
                     ]);
                     
-                    // Update billing record
-                    $billingRecord->update([
-                        'remaining_balance' => max(0, $billingRecord->remaining_balance - $data['total_amount'])
-                    ]);
+                    // Update billing record only if verified/completed
+                    if (in_array($payment->status, [Payment::STATUS_VERIFIED, Payment::STATUS_COMPLETED])) {
+                        $billingRecord->update([
+                            'remaining_balance' => max(0, $billingRecord->remaining_balance - $payment->total_amount)
+                        ]);
+                    }
                     
                     $imported++;
                     

@@ -781,13 +781,28 @@
         
         // Load app colors from settings
         function loadAppColors() {
-            fetch('/api/app-settings/colors')
-                .then(response => response.json())
+            fetch('/api/app-settings/colors', {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                }
+            })
+                .then(response => {
+                    if (response.status === 401) {
+                        // User not authenticated, skip loading colors
+                        console.log('User not authenticated, skipping color loading');
+                        return;
+                    }
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
                 .then(data => {
-                    if (data.primary_color) {
+                    if (data && data.primary_color) {
                         document.documentElement.style.setProperty('--app-primary-color', data.primary_color);
                     }
-                    if (data.secondary_color) {
+                    if (data && data.secondary_color) {
                         document.documentElement.style.setProperty('--app-secondary-color', data.secondary_color);
                     }
                 })

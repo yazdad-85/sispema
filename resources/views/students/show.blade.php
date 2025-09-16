@@ -129,27 +129,35 @@
                                         $computedPrevDebt = max(0, (float)$annualPrev->amount - (float)$paidPrev);
                                     }
                                 }
+                                // Show previous debt if it exists (regardless of academic year)
                                 $effectivePrevDebt = max((float)($student->previous_debt ?? 0), (float)$computedPrevDebt);
-
-                                // Jika tahun sebelumnya adalah level awal (VII atau X):
-                                // - Yatim 100%: tunggakan sebelumnya = 0
-                                // - Alumni X%: tunggakan sebelumnya dikurangi X%
+                                
+                                // Apply scholarship rules for previous debt
                                 $currentLevelForPrev = optional($student->classRoom)->safe_level ?? optional($student->classRoom)->level;
-                                $previousLevel = $currentLevelForPrev;
-                                if ($currentLevelForPrev === 'VIII') { $previousLevel = 'VII'; }
-                                elseif ($currentLevelForPrev === 'IX') { $previousLevel = 'VIII'; }
-                                elseif ($currentLevelForPrev === 'XI') { $previousLevel = 'X'; }
-                                elseif ($currentLevelForPrev === 'XII') { $previousLevel = 'XI'; }
                                 $discountPctPrev = (float)(optional($student->scholarshipCategory)->discount_percentage ?? 0);
                                 $categoryNamePrev = optional($student->scholarshipCategory)->name;
-                                $isYatimCategory = $categoryNamePrev === 'Yatim Piatu, Piatu, Yatim' && $discountPctPrev >= 100;
-                                $isAlumniCategory = $categoryNamePrev === 'Alumni' && $discountPctPrev > 0;
-                                if (in_array($previousLevel, ['VII','X'])) {
-                                    if ($isYatimCategory) {
+                                
+                                // Ketentuan beasiswa:
+                                // 1. Yatim piatu 100% hanya berlaku untuk kelas VII/X, selanjutnya tidak berlaku
+                                // 2. Alumni hanya berlaku untuk kelas X saja
+                                // 3. Anak guru 100% selama menjadi siswa dan ketika lulus juga tidak ada tagihan
+                                
+                                if ($categoryNamePrev === 'Yatim Piatu, Piatu, Yatim' && $discountPctPrev >= 100) {
+                                    // Yatim piatu 100% hanya berlaku untuk level VII/X
+                                    if (in_array($currentLevelForPrev, ['VII', 'X'])) {
                                         $effectivePrevDebt = 0;
-                                    } elseif ($isAlumniCategory) {
-                                        $effectivePrevDebt = max(0, $effectivePrevDebt * (1 - ($discountPctPrev/100)));
                                     }
+                                } elseif ($categoryNamePrev === 'Alumni' && $discountPctPrev > 0) {
+                                    // Alumni hanya berlaku untuk kelas X saja
+                                    if ($currentLevelForPrev === 'X') {
+                                        $effectivePrevDebt = $effectivePrevDebt * (1 - $discountPctPrev / 100);
+                                    }
+                                } elseif (strpos(strtolower($categoryNamePrev), 'guru') !== false && $discountPctPrev >= 100) {
+                                    // Anak guru 100% berlaku untuk semua level
+                                    $effectivePrevDebt = 0;
+                                } elseif ($discountPctPrev > 0) {
+                                    // Beasiswa umum lainnya
+                                    $effectivePrevDebt = $effectivePrevDebt * (1 - $discountPctPrev / 100);
                                 }
                             @endphp
                             @php
@@ -330,6 +338,31 @@
                                             $totalPayments = $student->payments->whereIn('status', ['verified', 'completed'])->sum('total_amount');
                                             $creditBalance = (float)($student->credit_balance ?? 0);
                                             
+                                            // Previous-year excess -> set as credit and zero previous debt in display
+                                            if ($student->academicYear) {
+                                                $prevStart = $student->academicYear->year_start - 1;
+                                                $prevHyphenEx = $prevStart . '-' . ($prevStart + 1);
+                                                $prevSlashEx  = $prevStart . '/' . ($prevStart + 1);
+                                                $totalBilledPrevEx = $student->billingRecords
+                                                    ->whereIn('origin_year', [$prevHyphenEx, $prevSlashEx])
+                                                    ->filter(function($br){ return stripos($br->notes ?? '', 'Excess Payment Transfer') === false; })
+                                                    ->sum(function($br){ return (float)$br->amount; });
+                                                $totalPaidPrevEx = $student->payments
+                                                    ->whereIn('status', ['verified', 'completed'])
+                                                    ->filter(function($p) use ($prevHyphenEx, $prevSlashEx, $student){
+                                                        $br = $student->billingRecords->firstWhere('id', $p->billing_record_id);
+                                                        if (!$br) return false;
+                                                        return in_array($br->origin_year, [$prevHyphenEx, $prevSlashEx]);
+                                                    })
+                                                    ->sum('total_amount');
+                                                $computedExcess = max(0, (float)$totalPaidPrevEx - (float)$totalBilledPrevEx);
+                                                if ($computedExcess > 0) {
+                                                    $creditBalance = max($creditBalance, $computedExcess);
+                                                    $previousDebt = 0;
+                                                    $effectivePrevDebt = 0;
+                                                }
+                                            }
+                                            
                                             // Total payments untuk tahun berjalan (prioritaskan berdasarkan billing ANNUAL jika ada)
                                             $totalPaymentsCurrentYear = 0;
                                             if ($annualBilling && isset($annualBilling->id)) {
@@ -337,6 +370,8 @@
                                                     ->where('billing_record_id', $annualBilling->id)
                                                     ->whereIn('status', ['verified', 'completed'])
                                                     ->sum('total_amount');
+                                                // Sertakan kredit (excess) sebagai pengurang tahun berjalan
+                                                $totalPaymentsCurrentYear += $creditBalance;
                                             } else {
                                                 $totalPaymentsCurrentYear = $creditBalance; // fallback
                                             }
@@ -365,31 +400,9 @@
                                             $monthlyBreakdown = $smartDistribution['monthly_breakdown'] ?? [];
                                         @endphp
                                         
-                                        {{-- Previous Debt Row --}}
-                                        @if($previousDebt > 0 && !$hasFullDiscount)
-                                        <tr class="table-warning">
-                                            <td><strong>KEKURANGAN SEBELUMNYA ({{ $student->previous_debt_year }})</strong></td>
-                                            <td><strong>Rp {{ number_format($previousDebt, 0, ',', '.') }}</strong></td>
-                                            <td>
-                                                @php
-                                                    $debtPaid = min($totalPayments, $previousDebt);
-                                                    $debtRemaining = max(0, $previousDebt - $totalPayments);
-                                                @endphp
-                                                <span class="badge bg-warning amount-badge">
-                                                    Rp {{ number_format($debtRemaining, 0, ',', '.') }}
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <span class="badge bg-warning status-badge">
-                                                    {{ $debtRemaining > 0 ? 'BELUM LUNAS' : 'LUNAS' }}
-                                                </span>
-                                            </td>
-                                            <td>-</td>
-                                        </tr>
-                                        @endif
                                         
-                                        {{-- Credit Balance Row --}}
-                                        @if($creditBalance > 0)
+                                        {{-- Credit Balance Row - hanya tampil jika ini adalah tahun ajaran baru (bukan tahun pembayaran asli) --}}
+                                        @if($creditBalance > 0 && isset($computedExcessPrevYear) && $computedExcessPrevYear > 0)
                                         <tr class="table-info">
                                             <td><strong>KELEBIHAN BAYAR ({{ $student->credit_balance_year }})</strong></td>
                                             <td><strong>Rp {{ number_format($creditBalance, 0, ',', '.') }}</strong></td>
@@ -407,15 +420,46 @@
                                         </tr>
                                         @endif
                                         
-                                        {{-- Monthly Billing Rows --}}
+                                        {{-- Check if student is graduated --}}
+                                        @php
+                                            $isGraduated = $student->status === 'graduated' || $student->classRoom->level === 'XII';
+                                        @endphp
+                                        
+                                        {{-- For graduated students, show previous debt directly from student record --}}
+                                        @if($isGraduated)
+                                        @php
+                                            // For graduated students, use direct previous_debt from student record
+                                            $graduatedPreviousDebt = (float)($student->previous_debt ?? 0);
+                                            
+                                            // If previous_debt is 0 but alert shows previous debt, use the alert value
+                                            // This handles cases where the database value might not be loaded properly
+                                            if ($graduatedPreviousDebt == 0 && $previousDebt > 0) {
+                                                $graduatedPreviousDebt = $previousDebt;
+                                            }
+                                        @endphp
+                                        @if($graduatedPreviousDebt > 0)
+                                        <tr class="table-warning">
+                                            <td><strong>KEKURANGAN SEBELUMNYA ({{ $student->previous_debt_year ?? 'Tahun Sebelumnya' }})</strong></td>
+                                            <td><strong>Rp {{ number_format($graduatedPreviousDebt, 0, ',', '.') }}</strong></td>
+                                            <td>
+                                                <span class="badge bg-warning amount-badge">
+                                                    Rp {{ number_format($graduatedPreviousDebt, 0, ',', '.') }}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-warning status-badge">
+                                                    {{ $graduatedPreviousDebt > 0 ? 'BELUM LUNAS' : 'LUNAS' }}
+                                                </span>
+                                            </td>
+                                            <td>-</td>
+                                        </tr>
+                                        @endif
+                                        @elseif(!$isGraduated)
+                                        {{-- Monthly Billing Rows for active students --}}
                                         @foreach($months as $index => $month)
                                             @php
-                                                // Get monthly amount from smart distribution
                                                 $monthlyRequired = $monthlyBreakdown[$month] ?? 0;
                                                 $monthlyPaid = 0;
-                                                
-                                                // Calculate payment allocation for this month
-                                                // Alokasikan pembayaran aktual per bulan (mengikuti breakdown & total dibayar tahun berjalan)
                                                 static $remainingPaymentForYear = null; 
                                                 if ($remainingPaymentForYear === null) {
                                                     $remainingPaymentForYear = $totalPaymentsCurrentYear;
@@ -426,7 +470,8 @@
                                                 // Sisa pembayaran kumulatif (konsisten dengan kwitansi)
                                                 static $cumulativeRemainingForYear = null;
                                                 if ($cumulativeRemainingForYear === null) {
-                                                    $cumulativeRemainingForYear = max(0, (float)$previousDebt - min($totalPayments, $previousDebt));
+                                                    // Mulai dari previous_debt (0 jika ada excess)
+                                                    $cumulativeRemainingForYear = (float)$previousDebt;
                                                 }
                                                 $monthlyRemaining = max(0, $cumulativeRemainingForYear + $monthlyRequired - $monthlyPaid);
                                                 $cumulativeRemainingForYear = $monthlyRemaining;
@@ -447,8 +492,6 @@
                                                 </td>
                                                 <td>
                                                     @php
-                                                        // Jatuh tempo: hari terakhir setiap bulan.
-                                                        // Bulan Jul-Des pakai year_start; Jan-Jun pakai year_end.
                                                         $monthToNum = [
                                                             'Juli' => 7, 'Agustus' => 8, 'September' => 9, 'Oktober' => 10, 'November' => 11, 'Desember' => 12,
                                                             'Januari' => 1, 'Februari' => 2, 'Maret' => 3, 'April' => 4, 'Mei' => 5, 'Juni' => 6,
@@ -461,7 +504,6 @@
                                                                     ? $annualBilling->academicYear->year_start 
                                                                     : $annualBilling->academicYear->year_end;
                                                             } else if (!empty($annualBilling->origin_year)) {
-                                                                // Parse origin_year e.g. "2026-2027" or "2026/2027"
                                                                 $parts = preg_split('/[-\/]/', $annualBilling->origin_year);
                                                                 if (count($parts) === 2) {
                                                                     $startY = intval($parts[0]);
@@ -478,6 +520,7 @@
                                                 </td>
                                             </tr>
                                         @endforeach
+                                        @endif {{-- End if(!$isGraduated) --}}
                                         
                                         {{-- Total Row --}}
                                         <tr class="table-info">
@@ -485,8 +528,8 @@
                                             <td><strong>Rp {{ number_format($totalObligation, 0, ',', '.') }}</strong></td>
                                             <td>
                                                 @php
-                                                    $debtPaidTotal = min($totalPayments, $previousDebt);
-                                                    $totalRemainingAll = max(0, ($effectiveYearly + $previousDebt) - ($totalPaymentsCurrentYear + $debtPaidTotal));
+                                                    // Total remaining = previous_debt + kewajiban tahun berjalan - pembayaran tahun berjalan (termasuk kredit)
+                                                    $totalRemainingAll = max(0, ($previousDebt + $effectiveYearly) - $totalPaymentsCurrentYear);
                                                 @endphp
                                                 <span class="badge bg-{{ $totalRemainingAll > 0 ? 'warning' : 'success' }} amount-badge">
                                                     Rp {{ number_format($totalRemainingAll, 0, ',', '.') }}

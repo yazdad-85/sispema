@@ -20,6 +20,24 @@ class SppFinancialService
      */
     public function processSppPayment(Payment $payment)
     {
+        // Guard: Only process verified/completed payments
+        if (!in_array($payment->status, [Payment::STATUS_VERIFIED, Payment::STATUS_COMPLETED])) {
+            Log::info('Skipping SPP payment processing due to status', [
+                'payment_id' => $payment->id,
+                'status' => $payment->status
+            ]);
+            return null;
+        }
+
+        // Duplicate guards
+        $existingCashBook = CashBook::where('reference_type', 'payment')
+            ->where('reference_id', $payment->id)
+            ->first();
+        $cashbookExists = (bool) $existingCashBook;
+        $realizationExists = ActivityRealization::where('is_auto_generated', true)
+            ->where('proof', $payment->receipt_number)
+            ->exists();
+
         try {
             DB::beginTransaction();
 
@@ -35,11 +53,42 @@ class SppFinancialService
             // Get or create SPP activity plan for current year, grouped by institution + level
             $sppPlan = $this->getOrCreateSppPlanForPayment($currentAcademicYear, $sppCategory, $payment);
 
-            // Create realization for SPP payment
-            $realization = $this->createSppRealization($payment, $sppPlan);
+            // Ensure realization exists
+            if ($realizationExists) {
+                // Fetch existing realization to pass to cashbook if needed
+                $realization = ActivityRealization::where('is_auto_generated', true)
+                    ->where('proof', $payment->receipt_number)
+                    ->first();
+            } else {
+                $realization = $this->createSppRealization($payment, $sppPlan);
+            }
 
-            // Add to cash book directly (since auto-generated realizations don't create cash book entries)
-            $this->addToCashBook($payment, $realization);
+            // Add or sync cash book
+            if (!$cashbookExists) {
+                $this->addToCashBook($payment, $realization);
+            } else {
+                // Sync existing entry if amount/description/date differ
+                $desiredDescription = 'Pembayaran SPP - ' . $payment->student->name;
+                if ($payment->student->scholarshipCategory) {
+                    $desiredDescription .= ' (' . $payment->student->scholarshipCategory->name . ')';
+                }
+
+                $needsUpdate = false;
+                if ((float)$existingCashBook->credit !== (float)$payment->total_amount) $needsUpdate = true;
+                if ($existingCashBook->description !== $desiredDescription) $needsUpdate = true;
+                if ($existingCashBook->date->format('Y-m-d') !== (new \Carbon\Carbon($payment->payment_date))->format('Y-m-d')) $needsUpdate = true;
+
+                if ($needsUpdate) {
+                    $existingCashBook->date = $payment->payment_date;
+                    $existingCashBook->description = $desiredDescription;
+                    $existingCashBook->debit = 0;
+                    $existingCashBook->credit = $payment->total_amount;
+                    $existingCashBook->save();
+
+                    // Recalculate balances since we changed a historical row
+                    $this->recalculateCashBookBalances();
+                }
+            }
 
             DB::commit();
 
@@ -191,6 +240,17 @@ class SppFinancialService
             'payment',
             $payment->id
         );
+    }
+
+    private function recalculateCashBookBalances(): void
+    {
+        $balance = 0;
+        $entries = CashBook::orderBy('date')->orderBy('id')->get();
+        foreach ($entries as $entry) {
+            $balance = $balance + (float) $entry->credit - (float) $entry->debit;
+            $entry->balance = $balance;
+            $entry->save();
+        }
     }
 
     /**

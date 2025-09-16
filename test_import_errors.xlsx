@@ -1,0 +1,7 @@
+NIS,Nama Lengkap,Institusi ID,Tahun Ajaran ID,Kelas ID,Email,No HP,Alamat,Nama Orang Tua,No HP Orang Tua,Kategori Beasiswa
+12345,John Doe,1,1,1,john@example.com,081234567890,Jakarta,Parent John,081234567891,Beasiswa Prestasi
+12345,Jane Doe,1,1,1,jane@example.com,081234567892,Bandung,Parent Jane,081234567893,Beasiswa Prestasi
+67890,Bob Smith,999,1,1,bob@example.com,081234567894,Surabaya,Parent Bob,081234567895,Beasiswa Tidak Ada
+11111,Alice Brown,1,999,1,invalid-email,081234567896,Medan,Parent Alice,081234567897,Beasiswa Prestasi
+22222,Charlie Wilson,1,1,999,charlie@example.com,081234567898,Yogyakarta,Parent Charlie,081234567899,Beasiswa Prestasi
+33333,David Lee,1,1,1,david@example.com,081234567900,Semarang,Parent David,081234567901,Beasiswa Prestasi

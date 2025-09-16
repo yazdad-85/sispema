@@ -67,21 +67,25 @@ class StudentController extends Controller
         // Get filter options
         if ($user->isSuperAdmin()) {
             $institutions = Institution::all();
-            // For super admin, show classes based on selected institution or all if none selected
-            if ($institutionId) {
-                $classes = ClassModel::where('institution_id', $institutionId)->get();
-            } else {
-                $classes = collect(); // Empty collection initially
-            }
         } else {
             $institutions = $user->institutions;
-            // For staff, show classes based on selected institution or their allowed institutions
-            if ($institutionId) {
-                $classes = ClassModel::where('institution_id', $institutionId)->get();
-            } else {
-                $classes = ClassModel::whereIn('institution_id', $institutions->pluck('id'))->get();
-            }
         }
+        
+        // Get classes based on selected filters
+        $classesQuery = ClassModel::where('is_active', true)->where('is_graduated_class', false);
+        
+        if ($institutionId) {
+            $classesQuery->where('institution_id', $institutionId);
+        } elseif (!$user->isSuperAdmin()) {
+            // For staff, limit to their allowed institutions
+            $classesQuery->whereIn('institution_id', $institutions->pluck('id'));
+        }
+        
+        if ($academicYearId) {
+            $classesQuery->where('academic_year_id', $academicYearId);
+        }
+        
+        $classes = $classesQuery->orderBy('class_name')->get();
         
         $academicYears = AcademicYear::all();
         
@@ -133,9 +137,12 @@ class StudentController extends Controller
             }
         }
 
-        Student::create($request->all());
+        $student = Student::create($request->all());
+        
+        // Otomatis buat billing record untuk siswa baru
+        $this->createBillingRecordForStudent($student);
 
-        return redirect()->route('students.index')->with('success', 'Siswa berhasil ditambahkan');
+        return redirect()->route('students.index')->with('success', 'Siswa berhasil ditambahkan dan billing record otomatis dibuat');
     }
 
     /**
@@ -326,9 +333,12 @@ class StudentController extends Controller
         $academicYearId = $request->get('academic_year_id');
         $search = $request->get('search');
 
+        // Get allowed institution IDs
+        $institutionIds = $user->institutions()->pluck('institutions.id');
+        
         // Build query with all necessary relationships
         $query = Student::with(['institution', 'academicYear', 'classRoom', 'scholarshipCategory', 'billingRecords'])
-            ->whereIn('institution_id', $user->institutions()->pluck('institutions.id'));
+            ->whereIn('institution_id', $institutionIds);
 
         // Apply filters
         if ($institutionId) {
@@ -349,6 +359,15 @@ class StudentController extends Controller
 
         // Get paginated results
         $students = $query->paginate(15)->onEachSide(1);
+        
+        // Debug: Log the query results
+        \Log::info('Staff students query', [
+            'user_id' => $user->id,
+            'user_role' => $user->role,
+            'institution_ids' => $institutionIds,
+            'students_count' => $students->count(),
+            'total_students' => $students->total()
+        ]);
         
         // Ensure all students have billing records
         foreach ($students as $student) {
@@ -610,6 +629,9 @@ class StudentController extends Controller
         $user = Auth::user();
         $file = $request->file('file');
         
+        // Initialize import log service
+        $logService = new \App\Services\ImportLogService('students', $user->id, $file->getClientOriginalName());
+        
         try {
             $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file->getPathname());
             $sheet = $spreadsheet->getActiveSheet();
@@ -618,30 +640,48 @@ class StudentController extends Controller
             // Skip header row
             array_shift($rows);
             
+            // Set total rows for logging
+            $logService->setTotalRows(count($rows));
+            
             $imported = 0;
-            $errors = [];
             
             foreach ($rows as $index => $row) {
-                if (empty(array_filter($row))) continue; // Skip empty rows
+                if (empty(array_filter($row))) {
+                    $logService->incrementProcessed();
+                    continue; // Skip empty rows
+                }
+                
+                $rowNumber = $index + 2; // +2 because we skipped header and array is 0-indexed
                 
                 try {
-                    $this->importStudentRow($row, $user, $index + 2, $errors);
+                    $this->importStudentRowWithLogging($row, $user, $rowNumber, $logService);
                     $imported++;
+                    $logService->addSuccess($rowNumber, "Data siswa berhasil diimport", ['nis' => $row[0] ?? 'N/A']);
                 } catch (\Exception $e) {
-                    $errors[] = "Baris " . ($index + 2) . ": " . $e->getMessage();
+                    $logService->addError($rowNumber, $e->getMessage(), $row);
                 }
+                
+                $logService->incrementProcessed();
             }
             
-            if (empty($errors)) {
-                return redirect()->route('students.index')
-                    ->with('success', "Berhasil import {$imported} data siswa");
-            } else {
+            // Finish logging
+            $logData = $logService->finish();
+            
+            if ($logService->hasErrors()) {
                 return redirect()->route('students.index')
                     ->with('warning', "Import selesai dengan {$imported} data berhasil, namun ada beberapa error")
-                    ->with('import_errors', $errors);
+                    ->with('import_errors', $logService->formatErrorsForDisplay())
+                    ->with('import_warnings', $logService->formatWarningsForDisplay())
+                    ->with('log_id', $logData['started_at']);
+            } else {
+                return redirect()->route('students.index')
+                    ->with('success', "Berhasil import {$imported} data siswa");
             }
             
         } catch (\Exception $e) {
+            $logService->addError(0, 'Error saat membaca file: ' . $e->getMessage(), []);
+            $logService->finish();
+            
             return redirect()->route('students.index')
                 ->with('error', 'Error saat membaca file: ' . $e->getMessage());
         }
@@ -894,5 +934,190 @@ class StudentController extends Controller
             'status' => 'active',
             'enrollment_date' => now(),
         ]);
+    }
+
+    private function importStudentRowWithLogging($row, $user, $rowNumber, $logService)
+    {
+        // Validasi data row minimal
+        if (empty($row[0]) || empty($row[1])) {
+            throw new \Exception('NIS dan Nama Lengkap wajib diisi');
+        }
+        
+        $nis = trim($row[0]);
+        $name = trim($row[1]);
+        $institutionIdFromFile = isset($row[2]) ? trim($row[2]) : null;
+        $academicYearIdFromFile = isset($row[3]) ? trim($row[3]) : null;
+        $classIdFromFile = isset($row[4]) ? trim($row[4]) : null;
+        $email = trim($row[5] ?? '');
+        $phone = trim($row[6] ?? '');
+        $address = trim($row[7] ?? '');
+        $parentName = trim($row[8] ?? '');
+        $parentPhone = trim($row[9] ?? '');
+        $scholarshipCategoryName = trim($row[10] ?? '');
+        
+        // Validasi NIS duplikat
+        if (Student::where('nis', $nis)->exists()) {
+            throw new \Exception("NIS '{$nis}' sudah ada");
+        }
+        
+        // Validasi email
+        if ($email && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new \Exception("Email '{$email}' tidak valid");
+        }
+        
+        // Validasi institusi
+        $institutionId = null;
+        if ($institutionIdFromFile) {
+            $institution = Institution::find($institutionIdFromFile);
+            if (!$institution) {
+                throw new \Exception("Institusi ID '{$institutionIdFromFile}' tidak ditemukan");
+            }
+            $institutionId = $institution->id;
+        } else {
+            // Gunakan institusi default user jika ada
+            $userInstitutions = $user->institutions;
+            if ($userInstitutions->count() > 0) {
+                $institutionId = $userInstitutions->first()->id;
+            } else {
+                throw new \Exception("Institusi tidak ditemukan dan user tidak memiliki akses institusi");
+            }
+        }
+        
+        // Validasi tahun ajaran
+        $academicYearId = null;
+        if ($academicYearIdFromFile) {
+            $academicYear = AcademicYear::find($academicYearIdFromFile);
+            if (!$academicYear) {
+                throw new \Exception("Tahun Ajaran ID '{$academicYearIdFromFile}' tidak ditemukan");
+            }
+            $academicYearId = $academicYear->id;
+        } else {
+            // Gunakan tahun ajaran aktif
+            $academicYear = AcademicYear::where('is_active', true)->first();
+            if (!$academicYear) {
+                throw new \Exception("Tidak ada tahun ajaran aktif");
+            }
+            $academicYearId = $academicYear->id;
+        }
+        
+        // Validasi kelas
+        $classId = null;
+        if ($classIdFromFile) {
+            $class = ClassModel::find($classIdFromFile);
+            if (!$class) {
+                throw new \Exception("Kelas ID '{$classIdFromFile}' tidak ditemukan");
+            }
+            $classId = $class->id;
+        }
+        
+        // Validasi kategori beasiswa
+        $scholarshipCategoryId = null;
+        if ($scholarshipCategoryName !== '') {
+            // Cek apakah input adalah ID numerik
+            if (is_numeric($scholarshipCategoryName)) {
+                $scholarshipCategory = ScholarshipCategory::find($scholarshipCategoryName);
+                if (!$scholarshipCategory) {
+                    $logService->addWarning($rowNumber, "Kategori beasiswa ID '{$scholarshipCategoryName}' tidak ditemukan, akan diabaikan");
+                } else {
+                    $scholarshipCategoryId = $scholarshipCategory->id;
+                }
+            } else {
+                // Cari berdasarkan nama
+                $scholarshipCategory = ScholarshipCategory::where('name', 'like', "%{$scholarshipCategoryName}%")->first();
+                if (!$scholarshipCategory) {
+                    $logService->addWarning($rowNumber, "Kategori beasiswa '{$scholarshipCategoryName}' tidak ditemukan, akan diabaikan");
+                } else {
+                    $scholarshipCategoryId = $scholarshipCategory->id;
+                }
+            }
+        }
+
+        $student = Student::create([
+            'nis' => $nis,
+            'name' => $name,
+            'email' => $email ?: null,
+            'phone' => $phone ?: null,
+            'address' => $address ?: null,
+            'parent_name' => $parentName ?: null,
+            'parent_phone' => $parentPhone ?: null,
+            'institution_id' => $institutionId,
+            'academic_year_id' => $academicYearId,
+            'class_id' => $classId,
+            'scholarship_category_id' => $scholarshipCategoryId,
+            'status' => 'active',
+            'enrollment_date' => now(),
+        ]);
+        
+        // Otomatis buat billing record untuk siswa baru dari import
+        $this->createBillingRecordForStudent($student);
+    }
+    
+    /**
+     * Buat billing record otomatis untuk siswa baru
+     */
+    private function createBillingRecordForStudent(Student $student)
+    {
+        try {
+            // Cari fee structure berdasarkan class_id terlebih dahulu
+            $feeStructure = FeeStructure::where('institution_id', $student->institution_id)
+                ->where('academic_year_id', $student->academic_year_id)
+                ->where('class_id', $student->class_id)
+                ->first();
+            
+            // Jika tidak ada, cari berdasarkan level melalui relasi class
+            if (!$feeStructure && $student->classRoom) {
+                $feeStructure = FeeStructure::where('institution_id', $student->institution_id)
+                    ->where('academic_year_id', $student->academic_year_id)
+                    ->whereHas('class', function($query) use ($student) {
+                        $query->where('level', $student->classRoom->level);
+                    })
+                    ->first();
+            }
+            
+            // Jika masih tidak ada, gunakan fallback
+            if (!$feeStructure) {
+                $feeStructure = FeeStructure::where('institution_id', $student->institution_id)
+                    ->where('academic_year_id', $student->academic_year_id)
+                    ->first();
+            }
+            
+            if ($feeStructure) {
+                // Buat billing record untuk 12 bulan
+                for ($month = 1; $month <= 12; $month++) {
+                    \App\Models\BillingRecord::create([
+                        'student_id' => $student->id,
+                        'fee_structure_id' => $feeStructure->id,
+                        'billing_month' => $month,
+                        'origin_year' => $student->academic_year_id,
+                        'origin_class' => $student->class_id,
+                        'amount' => $feeStructure->monthly_amount,
+                        'remaining_balance' => $feeStructure->monthly_amount,
+                        'status' => 'active',
+                        'notes' => 'ANNUAL',
+                        'due_date' => now()->addDays(30), // 30 hari dari sekarang
+                    ]);
+                }
+                
+                \Log::info("Billing records created for new student", [
+                    'student_id' => $student->id,
+                    'student_name' => $student->name,
+                    'billing_records_count' => 12
+                ]);
+            } else {
+                \Log::warning("No fee structure found for new student", [
+                    'student_id' => $student->id,
+                    'student_name' => $student->name,
+                    'institution_id' => $student->institution_id,
+                    'academic_year_id' => $student->academic_year_id,
+                    'class_id' => $student->class_id
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error("Failed to create billing records for new student", [
+                'student_id' => $student->id,
+                'student_name' => $student->name,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 }

@@ -10,7 +10,9 @@ class AcademicYearController extends Controller
 {
     public function index()
     {
-        $academicYears = AcademicYear::orderBy('year_start', 'desc')->get();
+        $academicYears = AcademicYear::withCount(['students', 'classes', 'feeStructures'])
+            ->orderBy('year_start', 'desc')
+            ->get();
         return view('academic-years.index', compact('academicYears'));
     }
 
@@ -45,6 +47,7 @@ class AcademicYearController extends Controller
 
     public function show(AcademicYear $academicYear)
     {
+        $academicYear->loadCount(['students', 'classes', 'feeStructures']);
         $academicYear->load(['students', 'classes', 'feeStructures']);
         return view('academic-years.show', compact('academicYear'));
     }

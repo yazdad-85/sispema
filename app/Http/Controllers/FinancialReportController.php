@@ -60,22 +60,42 @@ class FinancialReportController extends Controller
     {
         $query = CashBook::query();
 
-        if ($request->filled('start_date')) {
-            $query->where('date', '>=', $request->start_date);
+        // Filter by academic year and month
+        if ($request->filled('academic_year_id') && $request->filled('month')) {
+            $academicYear = \App\Models\AcademicYear::find($request->academic_year_id);
+            if ($academicYear) {
+                $year = $academicYear->year_start;
+                $month = $request->month;
+                
+                // Create start and end date for the specific month and year
+                $startDate = $year . '-' . str_pad($month, 2, '0', STR_PAD_LEFT) . '-01';
+                $endDate = date('Y-m-t', strtotime($startDate)); // Last day of the month
+                
+                $query->whereBetween('date', [$startDate, $endDate]);
+            }
         }
-        if ($request->filled('end_date')) {
-            $query->where('date', '<=', $request->end_date);
+        // Fallback to old date range filter for backward compatibility
+        elseif ($request->filled('start_date') || $request->filled('end_date')) {
+            if ($request->filled('start_date')) {
+                $query->where('date', '>=', $request->start_date);
+            }
+            if ($request->filled('end_date')) {
+                $query->where('date', '<=', $request->end_date);
+            }
         }
 
         $entries = $query->orderBy('date')->orderBy('id')->get();
         $currentBalance = CashBook::getCurrentBalance();
+
+        // Get academic years for dropdown
+        $academicYears = \App\Models\AcademicYear::orderBy('year_start', 'desc')->get();
 
         if ($request->has('export_pdf')) {
             $pdf = Pdf::loadView('financial.reports.cash-book-pdf', compact('entries', 'currentBalance'));
             return $pdf->download('buku-kas-umum-' . date('Y-m-d') . '.pdf');
         }
 
-        return view('financial.reports.cash-book', compact('entries', 'currentBalance'));
+        return view('financial.reports.cash-book', compact('entries', 'currentBalance', 'academicYears'));
     }
 
     public function balanceSheet(Request $request)
@@ -107,30 +127,25 @@ class FinancialReportController extends Controller
         $totalModal = $currentBalance + ($totalCredit - $totalDebit); // Modal = Kas + Laba Bersih
         
         // Hitung hutang jangka pendek dari realisasi yang belum dibayar
-        $unpaidRealizations = ActivityRealization::where('status', 'pending')
-            ->orWhere('status', 'approved')
-            ->where('payment_date', null)
+        $unpaidRealizations = ActivityRealization::where('status', 'draft')
+            ->where('transaction_type', 'debit')
             ->get();
         
         foreach($unpaidRealizations as $realization) {
-            $totalHutang += $realization->amount;
+            $totalHutang += $realization->total_amount;
         }
         
         // Hitung modal dari akumulasi laba bersih
         $totalModal = $currentBalance + ($totalCredit - $totalDebit);
         
         // Hitung piutang SPP dari tagihan yang belum dibayar
-        $students = Student::with(['billingRecords' => function($query) use ($request) {
-            if ($request->filled('academic_year_id')) {
-                $query->where('academic_year_id', $request->academic_year_id);
-            }
-        }])->get();
+        $students = Student::with(['billingRecords'])->get();
         
         foreach($students as $student) {
             foreach($student->billingRecords as $billing) {
-                $totalObligation = $billing->effectiveYearly; // Total kewajiban tahunan
+                $totalObligation = $billing->amount; // Total kewajiban tahunan
                 $totalPaid = $student->payments()
-                    ->where('status', 'verified')
+                    ->whereIn('status', ['verified', 'completed'])
                     ->sum('total_amount');
                 $remaining = $totalObligation - $totalPaid;
                 if($remaining > 0) {

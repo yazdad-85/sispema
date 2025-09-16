@@ -128,7 +128,7 @@
                             <th>Jenjang</th>
                             <th>Lembaga</th>
                             <th>Tahun Ajaran</th>
-                            <th>Kapasitas</th>
+                            <th>Jumlah</th>
                             <th>Status</th>
                             <th>Aksi</th>
                         </tr>
@@ -141,7 +141,11 @@
                             <td>{{ $class->grade_level }}</td>
                             <td>{{ $class->institution->name ?? 'N/A' }}</td>
                             <td>{{ $class->academicYear->name ?? 'N/A' }}</td>
-                            <td>{{ $class->capacity }}</td>
+                            <td>
+                                <span class="badge bg-info text-white">
+                                    {{ $class->students_count }} siswa
+                                </span>
+                            </td>
                             <td>
                                 @if($class->is_active)
                                     <span class="badge bg-success text-white">Aktif</span>

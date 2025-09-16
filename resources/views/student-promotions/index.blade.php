@@ -212,6 +212,13 @@
                         <select name="target_class_id" id="individual_target_class_id" class="form-control">
                             <option value="">Pilih Kelas Target (Opsional)</option>
                         </select>
+                        
+                        <small class="form-text text-muted">
+                            <strong>Pilihan:</strong><br>
+                            • Pilih kelas spesifik untuk menempatkan siswa di kelas tertentu<br>
+                            • Pilih "Distribusi Otomatis" untuk sistem otomatis mendistribusikan siswa<br>
+                            • Kosongkan untuk menggunakan distribusi otomatis default
+                        </small>
                     </div>
                 </form>
             </div>
@@ -304,75 +311,125 @@ function showPromotionModal(studentIds, promotionType) {
 
 // Load target classes
 function loadTargetClasses(studentId) {
+    console.log('loadTargetClasses called with studentId:', studentId);
+    
     fetch(`/api/classes?student_id=${studentId}`)
         .then(response => response.json())
         .then(data => {
+            console.log('API Response for loadTargetClasses:', data);
             if (data.success) {
                 loadTargetInstitutions(data.nextLevel);
             } else {
                 console.error('Error loading classes:', data.message);
+                // Fallback: load institutions directly
+                loadTargetInstitutions();
             }
         })
         .catch(error => {
             console.error('Error:', error);
+            // Fallback: load institutions directly
+            loadTargetInstitutions();
         });
 }
 
 // Load target institutions
 function loadTargetInstitutions(nextLevel) {
-    // Get current student's institution to filter classes
     const studentId = document.getElementById('individual_student_id').value.split(',')[0];
+    const institutionSelect = document.getElementById('individual_target_institution_id');
+    const classSelect = document.getElementById('individual_target_class_id');
     
-    console.log('loadTargetInstitutions called with studentId:', studentId);
+    console.log('loadTargetInstitutions called with studentId:', studentId, 'nextLevel:', nextLevel);
     
-    fetch(`/api/classes?student_id=${studentId}`)
-        .then(response => response.json())
-        .then(data => {
-            console.log('API Response:', data);
-            
-            if (data.success) {
-                const institutionSelect = document.getElementById('individual_target_institution_id');
-                const classSelect = document.getElementById('individual_target_class_id');
+    // Clear existing options
+    institutionSelect.innerHTML = '<option value="">Pilih Lembaga Target (Opsional)</option>';
+    classSelect.innerHTML = '<option value="">Pilih Kelas Target (Opsional)</option>';
+    
+    // First, try to get classes from API
+    if (studentId) {
+        fetch(`/api/classes?student_id=${studentId}`)
+            .then(response => response.json())
+            .then(data => {
+                console.log('API Response:', data);
                 
-                // Clear existing options
-                institutionSelect.innerHTML = '<option value="">Pilih Lembaga Target (Opsional)</option>';
-                classSelect.innerHTML = '<option value="">Pilih Kelas Target (Opsional)</option>';
-                
-                // Store available classes globally
-                window.availableClasses = data.classes;
-                console.log('Available classes:', data.classes);
-                
-                // Get unique institutions
-                const institutionMap = new Map();
-                data.classes.forEach(cls => {
-                    if (!institutionMap.has(cls.institution.id)) {
-                        institutionMap.set(cls.institution.id, cls.institution);
+                if (data.success) {
+                    // Store available classes globally (even if empty)
+                    window.availableClasses = data.classes || [];
+                    console.log('Available classes:', data.classes);
+                    
+                    if (data.classes && data.classes.length > 0) {
+                        // Get unique institutions from available classes
+                        const institutionMap = new Map();
+                        data.classes.forEach(cls => {
+                            if (!institutionMap.has(cls.institution.id)) {
+                                institutionMap.set(cls.institution.id, cls.institution);
+                            }
+                        });
+                        
+                        // Populate institution dropdown
+                        const uniqueInstitutions = Array.from(institutionMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+                        console.log('Unique institutions:', uniqueInstitutions);
+                        
+                        uniqueInstitutions.forEach(institution => {
+                            const option = document.createElement('option');
+                            option.value = institution.id;
+                            option.textContent = institution.name;
+                            institutionSelect.appendChild(option);
+                        });
+                        
+                        // Auto-populate classes if only one institution
+                        if (uniqueInstitutions.length === 1) {
+                            institutionSelect.value = uniqueInstitutions[0].id;
+                            loadTargetClassesByInstitution();
+                        }
+                    } else {
+                        // No classes available, but still load institutions for manual selection
+                        console.log('No classes available, loading all institutions');
+                        loadAllInstitutions();
+                        
+                        // Add auto-distribute option to class dropdown
+                        const autoOption = document.createElement('option');
+                        autoOption.value = 'auto_distribute';
+                        autoOption.textContent = 'Distribusi Otomatis (Sistem akan membuat kelas baru)';
+                        classSelect.appendChild(autoOption);
                     }
-                });
-                
-                // Populate institution dropdown
-                const uniqueInstitutions = Array.from(institutionMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-                console.log('Unique institutions:', uniqueInstitutions);
-                
-                uniqueInstitutions.forEach(institution => {
-                    const option = document.createElement('option');
-                    option.value = institution.id;
-                    option.textContent = institution.name;
-                    institutionSelect.appendChild(option);
-                });
-                
-                // Auto-populate classes if only one institution
-                if (uniqueInstitutions.length === 1) {
-                    institutionSelect.value = uniqueInstitutions[0].id;
-                    loadTargetClassesByInstitution();
+                } else {
+                    // Fallback: load all institutions
+                    loadAllInstitutions();
                 }
-            } else {
-                console.error('API returned success: false', data);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                // Fallback: load all institutions
+                loadAllInstitutions();
+            });
+    } else {
+        // Fallback: load all institutions
+        loadAllInstitutions();
+    }
+}
+
+// Load all institutions as fallback
+function loadAllInstitutions() {
+    console.log('Loading all institutions as fallback');
+    
+    // Get institutions from the page data (they should be available in the filter dropdown)
+    const filterInstitutionSelect = document.getElementById('institution_id');
+    const targetInstitutionSelect = document.getElementById('individual_target_institution_id');
+    
+    if (filterInstitutionSelect && targetInstitutionSelect) {
+        // Copy options from filter dropdown
+        const options = filterInstitutionSelect.querySelectorAll('option');
+        options.forEach(option => {
+            if (option.value) { // Skip empty option
+                const newOption = document.createElement('option');
+                newOption.value = option.value;
+                newOption.textContent = option.textContent;
+                targetInstitutionSelect.appendChild(newOption);
             }
-        })
-        .catch(error => {
-            console.error('Error:', error);
         });
+        
+        console.log('Loaded', options.length - 1, 'institutions from filter dropdown');
+    }
 }
 
 // Load target classes by institution
@@ -420,11 +477,18 @@ function loadTargetClassesByInstitution() {
     console.log('Filtered classes:', filteredClasses);
     
     if (filteredClasses.length === 0) {
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = `Tidak ada kelas ${nextLevel} di lembaga ini`;
-        option.disabled = true;
-        classSelect.appendChild(option);
+        // Add auto-distribute option when no classes are available
+        const autoOption = document.createElement('option');
+        autoOption.value = 'auto_distribute';
+        autoOption.textContent = `Distribusi Otomatis (Sistem akan membuat kelas ${nextLevel} baru)`;
+        classSelect.appendChild(autoOption);
+        
+        // Add info message
+        const infoOption = document.createElement('option');
+        infoOption.value = '';
+        infoOption.textContent = `Tidak ada kelas ${nextLevel} di lembaga ini - gunakan distribusi otomatis`;
+        infoOption.disabled = true;
+        classSelect.appendChild(infoOption);
         return;
     }
     

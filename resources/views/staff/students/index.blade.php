@@ -363,7 +363,7 @@
                             <select class="form-control form-select" id="class_filter">
                                 <option value="">Semua Kelas</option>
                                 @foreach($classes as $class)
-                                    <option value="{{ $class->id }}">{{ $class->class_name }}</option>
+                                    <option value="{{ $class->id }}" data-institution-id="{{ $class->institution_id }}">{{ $class->class_name }}</option>
                                 @endforeach
                             </select>
                         </div>
@@ -410,6 +410,14 @@
                                 </tr>
                             </thead>
                             <tbody>
+                                {{-- Debug: Show students count --}}
+                                @if(config('app.debug'))
+                                    <tr>
+                                        <td colspan="10" class="text-center bg-info text-white">
+                                            DEBUG: Students count = {{ $students->count() }}, Total = {{ $students->total() }}
+                                        </td>
+                                    </tr>
+                                @endif
                                 @forelse($students as $index => $student)
                                     <tr>
                                         <td>{{ $index + 1 }}</td>
@@ -470,26 +478,9 @@
                                                 // Check if student has 100% scholarship discount
                                                 $hasFullDiscount = $scholarshipPct >= 100;
                                                 
-                                                // Calculate previous debt (use annual previous year billing if available)
-                                                $computedPrevDebt = 0;
-                                                if ($student->academicYear) {
-                                                    $prevYear = $student->academicYear->year_start - 1;
-                                                    $prevHyphen = $prevYear . '-' . ($prevYear + 1);
-                                                    $prevSlash = $prevYear . '/' . ($prevYear + 1);
-                                                    $annualPrev = $student->billingRecords
-                                                        ->where('notes', 'ANNUAL')
-                                                        ->first(function($br) use ($prevHyphen, $prevSlash){
-                                                            return $br->origin_year === $prevHyphen || $br->origin_year === $prevSlash;
-                                                        });
-                                                    if ($annualPrev) {
-                                                        $paidPrev = $student->payments
-                                                            ->where('billing_record_id', $annualPrev->id)
-                                                            ->whereIn('status', ['verified', 'completed'])
-                                                            ->sum('total_amount');
-                                                        $computedPrevDebt = max(0, (float)$annualPrev->amount - (float)$paidPrev);
-                                                    }
-                                                }
-                                                $previousDebt = max((float)($student->previous_debt ?? 0), (float)$computedPrevDebt);
+                                                // Use previous_debt field that is automatically calculated when academic year changes
+                                                // This field is updated by AcademicYearObserver when new academic year is created
+                                                $previousDebt = (float)($student->previous_debt ?? 0);
                                                 
                                                 // Apply scholarship rules for previous starting levels (VII/X):
                                                 // - Yatim 100% => previous debt becomes 0
@@ -512,15 +503,24 @@
                                                     }
                                                 }
                                                 
-                                                // Calculate total obligation and remaining balance
+                                                // Calculate total obligation as: current year outstanding (remaining_balance)
+                                                // plus previous_debt. Do NOT show monthly; use actual unpaid total.
+                                                $currentOutstanding = 0;
+                                                if ($currentAcademicYear) {
+                                                    $yearHyphen = $currentAcademicYear->year_start . '-' . $currentAcademicYear->year_end;
+                                                    $currentOutstanding = $student->billingRecords
+                                                        ->where('origin_year', $yearHyphen)
+                                                        ->filter(function($br){
+                                                            return stripos($br->notes ?? '', 'Excess Payment Transfer') === false;
+                                                        })
+                                                        ->sum(function($br){ return (float) $br->remaining_balance; });
+                                                }
+
                                                 if ($hasFullDiscount) {
                                                     $totalObligation = 0;
-                                                    $remainingBalance = 0;
                                                     $previousDebt = 0;
                                                 } else {
-                                                    $totalObligation = $effectiveYearly + $previousDebt;
-                                                    $creditBalance = (float)($student->credit_balance ?? 0);
-                                                    $remainingBalance = max(0, $effectiveYearly - $creditBalance);
+                                                    $totalObligation = max(0, (float)$currentOutstanding + (float)$previousDebt);
                                                 }
                                             @endphp
                                             <div>
@@ -562,7 +562,7 @@
                             dari {{ $students->total() }} data siswa
                         </div>
                         <div>
-                            {{ $students->links('vendor.pagination.bootstrap-4') }}
+                            {{ $students->appends(request()->query())->links('vendor.pagination.bootstrap-4') }}
                         </div>
                     </div>
                 </div>
@@ -598,7 +598,10 @@ function clearFilters() {
 }
 
 // Auto-apply filters on change
-document.getElementById('institution_filter').addEventListener('change', applyFilters);
+document.getElementById('institution_filter').addEventListener('change', function() {
+    filterClassesByInstitution();
+    applyFilters();
+});
 document.getElementById('class_filter').addEventListener('change', applyFilters);
 document.getElementById('academic_year_filter').addEventListener('change', applyFilters);
 
@@ -625,6 +628,66 @@ document.addEventListener('DOMContentLoaded', function() {
     if (urlParams.get('search')) {
         document.getElementById('search_filter').value = urlParams.get('search');
     }
+    
+    // Update pagination links to maintain filters
+    updatePaginationLinks();
+    
+    // Filter classes based on current institution selection
+    filterClassesByInstitution();
 });
+
+// Function to update pagination links with current filters
+function updatePaginationLinks() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paginationLinks = document.querySelectorAll('.pagination a');
+    
+    paginationLinks.forEach(link => {
+        const href = new URL(link.href);
+        const linkParams = new URLSearchParams(href.search);
+        
+        // Preserve all filter parameters
+        if (urlParams.get('institution_id')) {
+            linkParams.set('institution_id', urlParams.get('institution_id'));
+        }
+        if (urlParams.get('class_id')) {
+            linkParams.set('class_id', urlParams.get('class_id'));
+        }
+        if (urlParams.get('academic_year_id')) {
+            linkParams.set('academic_year_id', urlParams.get('academic_year_id'));
+        }
+        if (urlParams.get('search')) {
+            linkParams.set('search', urlParams.get('search'));
+        }
+        
+        // Update the link href
+        link.href = href.pathname + '?' + linkParams.toString();
+    });
+}
+
+// Function to filter classes based on selected institution
+function filterClassesByInstitution() {
+    const institutionFilter = document.getElementById('institution_filter');
+    const classFilter = document.getElementById('class_filter');
+    const selectedInstitutionId = institutionFilter.value;
+    
+    // Reset class filter when institution changes
+    classFilter.value = '';
+    
+    // Show/hide class options based on institution
+    const classOptions = classFilter.querySelectorAll('option');
+    classOptions.forEach(option => {
+        if (option.value === '') {
+            // Always show "Semua Kelas" option
+            option.style.display = 'block';
+        } else {
+            const optionInstitutionId = option.getAttribute('data-institution-id');
+            if (selectedInstitutionId === '' || optionInstitutionId === selectedInstitutionId) {
+                option.style.display = 'block';
+            } else {
+                option.style.display = 'none';
+            }
+        }
+    });
+}
 </script>
 @endsection

@@ -8,6 +8,9 @@
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h3 class="card-title">Daftar Siswa</h3>
                     <div>
+                        <a href="{{ route('financial-reports.import-logs.index', ['type' => 'students']) }}" class="btn btn-info me-2">
+                            <i class="fas fa-file-alt"></i> Log Import
+                        </a>
                         <a href="{{ route('students.import-template') }}" class="btn btn-success me-2">
                             <i class="fas fa-file-excel"></i> Import Excel
                         </a>
@@ -40,6 +43,25 @@
                                     <li>{{ $error }}</li>
                                 @endforeach
                             </ul>
+                            @if(session('log_id'))
+                                <div class="mt-2">
+                                    <a href="{{ route('financial-reports.import-logs.show', session('log_id')) }}" class="btn btn-sm btn-info">
+                                        <i class="fas fa-eye"></i> Lihat Detail Log
+                                    </a>
+                                </div>
+                            @endif
+                        </div>
+                    @endif
+
+                    @if(session('import_warnings'))
+                        <div class="alert alert-info alert-dismissible">
+                            <button type="button" class="close" data-dismissible="alert" aria-hidden="true">&times;</button>
+                            <h6>Warning Import:</h6>
+                            <ul class="mb-0">
+                                @foreach(session('import_warnings') as $warning)
+                                    <li>{{ $warning }}</li>
+                                @endforeach
+                            </ul>
                         </div>
                     @endif
 
@@ -54,12 +76,24 @@
                                 </div>
                                 <div class="col-md-2">
                                     <label for="institution_id" class="form-label">Lembaga</label>
-                                    <select class="form-control" id="institution_id" name="institution_id">
+                                    <select class="form-control" id="institution_id" name="institution_id" onchange="updateClasses()">
                                         <option value="">Semua Lembaga</option>
                                         @foreach($institutions as $institution)
                                             <option value="{{ $institution->id }}" 
                                                 {{ request('institution_id') == $institution->id ? 'selected' : '' }}>
                                                 {{ $institution->name }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label for="academic_year_id" class="form-label">Tahun Ajaran</label>
+                                    <select class="form-control" id="academic_year_id" name="academic_year_id" onchange="updateClasses()">
+                                        <option value="">Semua Tahun</option>
+                                        @foreach($academicYears as $academicYear)
+                                            <option value="{{ $academicYear->id }}" 
+                                                {{ request('academic_year_id') == $academicYear->id ? 'selected' : '' }}>
+                                                {{ $academicYear->year_start }}-{{ $academicYear->year_end }}
                                             </option>
                                         @endforeach
                                     </select>
@@ -72,18 +106,6 @@
                                             <option value="{{ $class->id }}" 
                                                 {{ request('class_id') == $class->id ? 'selected' : '' }}>
                                                 {{ $class->class_name }}
-                                            </option>
-                                        @endforeach
-                                    </select>
-                                </div>
-                                <div class="col-md-2">
-                                    <label for="academic_year_id" class="form-label">Tahun Ajaran</label>
-                                    <select class="form-control" id="academic_year_id" name="academic_year_id">
-                                        <option value="">Semua Tahun</option>
-                                        @foreach($academicYears as $academicYear)
-                                            <option value="{{ $academicYear->id }}" 
-                                                {{ request('academic_year_id') == $academicYear->id ? 'selected' : '' }}>
-                                                {{ $academicYear->year_start }}-{{ $academicYear->year_end }}
                                             </option>
                                         @endforeach
                                     </select>
@@ -259,49 +281,42 @@
 </style>
 
 <script>
-// Wait for DOM to be ready
-document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded, setting up event listeners...');
-    
-    const institutionSelect = document.getElementById('institution_id');
+function updateClasses() {
+    const institutionId = document.getElementById('institution_id').value;
+    const academicYearId = document.getElementById('academic_year_id').value;
     const classSelect = document.getElementById('class_id');
     
-    if (institutionSelect && classSelect) {
-        console.log('Found institution and class selects');
-        
-        // Add some basic styling and functionality for dropdowns
-        console.log('Setting up vanilla JavaScript dropdown functionality');
-        
-        // Dynamic class loading based on selected institution
-        institutionSelect.addEventListener('change', function() {
-            const institutionId = this.value;
-            console.log('Institution changed to:', institutionId);
-            
-            // Auto-submit form to reload page with new institution filter
-            // This ensures classes are loaded from server with correct data
-            const form = this.closest('form');
-            if (form) {
-                // Clear class selection before submitting
-                classSelect.value = '';
-                
-                // Submit form to reload page
-                form.submit();
-            }
-        });
-        
-        // Add event listener for reset button
-        const resetButton = document.querySelector('a[href*="students"]');
-        if (resetButton) {
-            resetButton.addEventListener('click', function(e) {
-                // Reset class dropdown to initial state
-                classSelect.innerHTML = '<option value="">Pilih Lembaga terlebih dahulu</option>';
-            });
-        }
-        
-        console.log('Event listener attached successfully');
-    } else {
-        console.error('Could not find institution or class select elements');
+    // Clear current options
+    classSelect.innerHTML = '<option value="">Semua Kelas</option>';
+    
+    if (!institutionId && !academicYearId) {
+        return;
     }
+    
+    // Show loading
+    classSelect.innerHTML = '<option value="">Loading...</option>';
+    
+    // Make AJAX request to get classes
+    fetch(`/api/classes?institution_id=${institutionId}&academic_year_id=${academicYearId}`)
+        .then(response => response.json())
+        .then(data => {
+            classSelect.innerHTML = '<option value="">Semua Kelas</option>';
+            data.forEach(classItem => {
+                const option = document.createElement('option');
+                option.value = classItem.id;
+                option.textContent = classItem.class_name;
+                classSelect.appendChild(option);
+            });
+        })
+        .catch(error => {
+            console.error('Error loading classes:', error);
+            classSelect.innerHTML = '<option value="">Error loading classes</option>';
+        });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize classes on page load
+    updateClasses();
 });
 </script>
 @endsection

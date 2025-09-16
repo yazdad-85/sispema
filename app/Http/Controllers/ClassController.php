@@ -30,7 +30,8 @@ class ClassController extends Controller
         }
         
         // Build query with filters
-        $query = ClassModel::with(['institution', 'academicYear']);
+        $query = ClassModel::with(['institution', 'academicYear'])
+            ->withCount('students');
         
         // Apply institution filter
         if ($request->filled('institution_id')) {

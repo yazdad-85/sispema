@@ -16,6 +16,7 @@ use App\Http\Controllers\ActivityPlanController;
 use App\Http\Controllers\ActivityRealizationController;
 use App\Http\Controllers\CashBookController;
 use App\Http\Controllers\FinancialReportController;
+use App\Http\Controllers\ImportLogController;
 use Illuminate\Http\Request;
 
 /*
@@ -299,7 +300,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/reports/outstanding/export/{format}', [ReportController::class, 'exportOutstanding'])->name('reports.outstanding.export');
     Route::get('/reports/payments/export', [ReportController::class, 'exportPayments'])->name('reports.payments.export');
     
-    // API for app settings
+    // API for app settings - requires authentication
     Route::get('/api/app-settings/colors', function() {
         $settings = \App\Models\AppSetting::first();
         return response()->json([
@@ -332,6 +333,12 @@ Route::middleware(['auth'])->group(function () {
                 Route::get('/cash-book/create', [CashBookController::class, 'create'])->name('cash-book.create');
                 Route::post('/cash-book', [CashBookController::class, 'store'])->name('cash-book.store');
                 Route::delete('/cash-book/{cashBook}', [CashBookController::class, 'destroy'])->name('cash-book.destroy');
+                
+                // Import Logs
+                Route::get('/import-logs', [ImportLogController::class, 'index'])->name('import-logs.index');
+                Route::get('/import-logs/{logId}', [ImportLogController::class, 'show'])->name('import-logs.show');
+                Route::get('/import-logs/{logId}/download', [ImportLogController::class, 'download'])->name('import-logs.download');
+                Route::delete('/import-logs/clear', [ImportLogController::class, 'clear'])->name('import-logs.clear');
             });
 });
 

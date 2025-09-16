@@ -28,24 +28,45 @@
                     <!-- Filter Form -->
                     <form method="GET" class="mb-4">
                         <div class="row g-3">
-                            <div class="col-md-3">
-                                <label for="start_date" class="form-label">Tanggal Mulai</label>
-                                <input type="date" name="start_date" id="start_date" class="form-control" value="{{ request('start_date') }}">
+                            <div class="col-md-4">
+                                <label for="academic_year_id" class="form-label">Tahun Ajaran</label>
+                                <select name="academic_year_id" id="academic_year_id" class="form-select">
+                                    <option value="">-- Pilih Tahun Ajaran --</option>
+                                    @foreach($academicYears as $year)
+                                        <option value="{{ $year->id }}" {{ request('academic_year_id') == $year->id ? 'selected' : '' }}>
+                                            {{ $year->name }}
+                                        </option>
+                                    @endforeach
+                                </select>
                             </div>
                             
                             <div class="col-md-3">
-                                <label for="end_date" class="form-label">Tanggal Akhir</label>
-                                <input type="date" name="end_date" id="end_date" class="form-control" value="{{ request('end_date') }}">
+                                <label for="month" class="form-label">Bulan</label>
+                                <select name="month" id="month" class="form-select">
+                                    <option value="">-- Pilih Bulan --</option>
+                                    <option value="1" {{ request('month') == '1' ? 'selected' : '' }}>Januari</option>
+                                    <option value="2" {{ request('month') == '2' ? 'selected' : '' }}>Februari</option>
+                                    <option value="3" {{ request('month') == '3' ? 'selected' : '' }}>Maret</option>
+                                    <option value="4" {{ request('month') == '4' ? 'selected' : '' }}>April</option>
+                                    <option value="5" {{ request('month') == '5' ? 'selected' : '' }}>Mei</option>
+                                    <option value="6" {{ request('month') == '6' ? 'selected' : '' }}>Juni</option>
+                                    <option value="7" {{ request('month') == '7' ? 'selected' : '' }}>Juli</option>
+                                    <option value="8" {{ request('month') == '8' ? 'selected' : '' }}>Agustus</option>
+                                    <option value="9" {{ request('month') == '9' ? 'selected' : '' }}>September</option>
+                                    <option value="10" {{ request('month') == '10' ? 'selected' : '' }}>Oktober</option>
+                                    <option value="11" {{ request('month') == '11' ? 'selected' : '' }}>November</option>
+                                    <option value="12" {{ request('month') == '12' ? 'selected' : '' }}>Desember</option>
+                                </select>
                             </div>
                             
                             <div class="col-md-2">
                                 <label class="form-label">&nbsp;</label>
                                 <div class="d-flex gap-2">
                                     <button type="submit" class="btn btn-primary">
-                                        <i class="fas fa-search"></i>
+                                        <i class="fas fa-search"></i> Filter
                                     </button>
                                     <a href="{{ route('financial-reports.cash-book') }}" class="btn btn-secondary">
-                                        <i class="fas fa-times"></i>
+                                        <i class="fas fa-times"></i> Reset
                                     </a>
                                 </div>
                             </div>

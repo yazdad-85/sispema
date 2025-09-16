@@ -18,6 +18,8 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
+// API for app settings - moved to web routes for proper session authentication
+
 // API for classes by institution
 Route::get('/classes', function (Request $request) {
     $query = \App\Models\ClassModel::with('institution', 'academicYear')
@@ -78,6 +80,11 @@ Route::get('/classes', function (Request $request) {
     }
     
     $classes = $query->orderBy('class_name')->get(['id', 'class_name', 'level', 'institution_id', 'academic_year_id']);
+    
+    // Return classes directly for AJAX requests
+    if ($request->has('institution_id') || $request->has('academic_year_id')) {
+        return response()->json($classes);
+    }
     
     return response()->json([
         'success' => true,
