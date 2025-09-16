@@ -352,11 +352,11 @@
                     </thead>
                     <tbody>
                         @php
-                            // Ambil struktur biaya tahun berjalan seperti di halaman detail
-                            $currentAcademicYear = $payment->student->academicYear;
+                            // Ambil struktur biaya berdasarkan tahun ajaran yang dipilih
+                            $displayAcademicYear = $selectedAcademicYear ?? $payment->student->academicYear;
                             $currentLevel = optional($payment->student->classRoom)->safe_level ?? optional($payment->student->classRoom)->level;
-                            $fs = $currentLevel ? \App\Models\FeeStructure::findByLevel($payment->student->institution_id, optional($currentAcademicYear)->id, $currentLevel) : null;
-                            $baseYearlyAmount = $fs ? (float)$fs->yearly_amount : (float)($payment->billingRecord->amount ?? 0);
+                            $fs = $currentLevel ? \App\Models\FeeStructure::findByLevel($payment->student->institution_id, $displayAcademicYear->id, $currentLevel) : null;
+                            $baseYearlyAmount = $fs ? (float)$fs->yearly_amount : (float)($currentBillingRecords->first()->amount ?? 0);
 
                             // Terapkan aturan beasiswa sama seperti di detail
                             $scholarshipPct = (float)(optional($payment->student->scholarshipCategory)->discount_percentage ?? 0);
@@ -388,14 +388,20 @@
                                 'MARET' => 'Maret', 'APRIL' => 'April', 'MEI' => 'Mei', 'JUNI' => 'Juni',
                             ];
                             
-                            // Get total payments for this billing record (only for current academic year)
-                            $currentAcademicYearId = $payment->student->academic_year_id;
+                            // Get total payments for selected academic year
+                            $filterAcademicYearId = $selectedAcademicYear ? $selectedAcademicYear->id : $payment->student->academic_year_id;
                             $totalPayments = \App\Models\Payment::where('student_id', $payment->student_id)
-                                ->where('billing_record_id', $payment->billing_record_id)
-                                ->whereHas('billingRecord.feeStructure', function($query) use ($currentAcademicYearId) {
-                                    $query->where('academic_year_id', $currentAcademicYearId);
+                                ->whereHas('billingRecord.feeStructure', function($query) use ($filterAcademicYearId) {
+                                    $query->where('academic_year_id', $filterAcademicYearId);
                                 })
                                 ->sum('total_amount');
+                                
+                            // Get billing records for the selected academic year
+                            $currentBillingRecords = \App\Models\BillingRecord::where('student_id', $payment->student_id)
+                                ->whereHas('feeStructure', function($query) use ($filterAcademicYearId) {
+                                    $query->where('academic_year_id', $filterAcademicYearId);
+                                })
+                                ->get();
                             
                             // Get previous debt from student record with scholarship adjustments for starting level (VII/X)
                             $previousDebt = $payment->student->previous_debt ?? 0;
@@ -498,7 +504,7 @@
                         @endphp
                         
                         {{-- Kelebihan Bayar hanya tampil jika ini adalah tahun ajaran baru (bukan tahun pembayaran asli) --}}
-                        @if($creditBalance > 0 && $payment->student->academic_year_id != $payment->billingRecord->feeStructure->academic_year_id)
+                        @if($creditBalance > 0 && $payment->student->academic_year_id != $displayAcademicYear->id)
                         <!-- Kelebihan Bayar -->
                         <tr style="background-color: #d1ecf1;">
                             <td class="month"><strong>KELEBIHAN BAYAR ({{ $creditYear }})</strong></td>
@@ -585,11 +591,10 @@
                     </thead>
                     <tbody>
                         @php
-                            // Show payments for current academic year + excess payment entry if exists
+                            // Show payments for selected academic year
                             $paymentHistory = \App\Models\Payment::where('student_id', $payment->student_id)
-                                ->where('billing_record_id', $payment->billing_record_id)
-                                ->whereHas('billingRecord.feeStructure', function($query) use ($currentAcademicYearId) {
-                                    $query->where('academic_year_id', $currentAcademicYearId);
+                                ->whereHas('billingRecord.feeStructure', function($query) use ($filterAcademicYearId) {
+                                    $query->where('academic_year_id', $filterAcademicYearId);
                                 })
                                 ->orderBy('payment_date')
                                 ->get();
