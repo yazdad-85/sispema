@@ -356,6 +356,15 @@
                             $displayAcademicYear = $selectedAcademicYear ?? $payment->student->academicYear;
                             $currentLevel = optional($payment->student->classRoom)->safe_level ?? optional($payment->student->classRoom)->level;
                             $fs = $currentLevel ? \App\Models\FeeStructure::findByLevel($payment->student->institution_id, $displayAcademicYear->id, $currentLevel) : null;
+                            
+                            // Get billing records for the selected academic year first
+                            $filterAcademicYearId = $selectedAcademicYear ? $selectedAcademicYear->id : $payment->student->academic_year_id;
+                            $currentBillingRecords = \App\Models\BillingRecord::where('student_id', $payment->student_id)
+                                ->whereHas('feeStructure', function($query) use ($filterAcademicYearId) {
+                                    $query->where('academic_year_id', $filterAcademicYearId);
+                                })
+                                ->get();
+                            
                             $baseYearlyAmount = $fs ? (float)$fs->yearly_amount : (float)($currentBillingRecords->first()->amount ?? $payment->billingRecord->amount ?? 0);
 
                             // Terapkan aturan beasiswa sama seperti di detail
@@ -403,20 +412,12 @@
                                 ];
                             }
                             
-                            // Get total payments for selected academic year
-                            $filterAcademicYearId = $selectedAcademicYear ? $selectedAcademicYear->id : $payment->student->academic_year_id;
+                            // Get total payments for the selected academic year
                             $totalPayments = \App\Models\Payment::where('student_id', $payment->student_id)
                                 ->whereHas('billingRecord.feeStructure', function($query) use ($filterAcademicYearId) {
                                     $query->where('academic_year_id', $filterAcademicYearId);
                                 })
                                 ->sum('total_amount');
-                                
-                            // Get billing records for the selected academic year
-                            $currentBillingRecords = \App\Models\BillingRecord::where('student_id', $payment->student_id)
-                                ->whereHas('feeStructure', function($query) use ($filterAcademicYearId) {
-                                    $query->where('academic_year_id', $filterAcademicYearId);
-                                })
-                                ->get();
                             
                             // Get previous debt from student record with scholarship adjustments for starting level (VII/X)
                             $previousDebt = $payment->student->previous_debt ?? 0;
@@ -478,15 +479,17 @@
                             $cumulativeRemaining = 0; // Track cumulative remaining balance
                             $remainingCredit = $creditBalance; // Track remaining credit balance
                             
-                            // First, allocate to previous debt (only if no excess payment)
-                            if ($previousDebt > 0) {
-                                $paymentForPreviousDebt = min($remainingPayment, $previousDebt);
-                                $remainingPayment -= $paymentForPreviousDebt;
-                                $cumulativeRemaining = $previousDebt - $paymentForPreviousDebt;
-                            }
-                            
-                            // Then allocate to monthly payments
-                            foreach ($months as $index => $month) {
+                            // Only process monthly data for active students
+                            if (!$isGraduated) {
+                                // First, allocate to previous debt (only if no excess payment)
+                                if ($previousDebt > 0) {
+                                    $paymentForPreviousDebt = min($remainingPayment, $previousDebt);
+                                    $remainingPayment -= $paymentForPreviousDebt;
+                                    $cumulativeRemaining = $previousDebt - $paymentForPreviousDebt;
+                                }
+                                
+                                // Then allocate to monthly payments
+                                foreach ($months as $index => $month) {
                                 $key = $mapReceiptToBreakdown[$month] ?? null;
                                 $monthlyRequired = $key ? (float)($breakdown[$key] ?? 0) : 0;
                                 $monthlyPaid = 0;
@@ -515,6 +518,7 @@
                                     'remaining' => $monthlyRemaining,
                                     'isPaid' => $monthlyRemaining == 0
                                 ];
+                                }
                             }
                         @endphp
                         
@@ -563,9 +567,6 @@
                                     @php
                                         $graduatedPaid = $payment->student->payments
                                             ->whereIn('status', ['verified', 'completed'])
-                                            ->whereHas('billingRecord', function($query) use ($payment) {
-                                                $query->where('student_id', $payment->student_id);
-                                            })
                                             ->sum('total_amount');
                                         $graduatedPaidPrev = min($graduatedPaid, $graduatedPreviousDebt);
                                     @endphp
@@ -612,9 +613,6 @@
                             @php
                                 $graduatedPaid = $payment->student->payments
                                     ->whereIn('status', ['verified', 'completed'])
-                                    ->whereHas('billingRecord', function($query) use ($payment) {
-                                        $query->where('student_id', $payment->student_id);
-                                    })
                                     ->sum('total_amount');
                                 $graduatedPaidPrev = min($graduatedPaid, $graduatedPreviousDebt);
                                 $totalRequired = $graduatedPreviousDebt;
