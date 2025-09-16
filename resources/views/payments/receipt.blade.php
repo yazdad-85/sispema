@@ -356,7 +356,7 @@
                             $displayAcademicYear = $selectedAcademicYear ?? $payment->student->academicYear;
                             $currentLevel = optional($payment->student->classRoom)->safe_level ?? optional($payment->student->classRoom)->level;
                             $fs = $currentLevel ? \App\Models\FeeStructure::findByLevel($payment->student->institution_id, $displayAcademicYear->id, $currentLevel) : null;
-                            $baseYearlyAmount = $fs ? (float)$fs->yearly_amount : (float)($currentBillingRecords->first()->amount ?? 0);
+                            $baseYearlyAmount = $fs ? (float)$fs->yearly_amount : (float)($currentBillingRecords->first()->amount ?? $payment->billingRecord->amount ?? 0);
 
                             // Terapkan aturan beasiswa sama seperti di detail
                             $scholarshipPct = (float)(optional($payment->student->scholarshipCategory)->discount_percentage ?? 0);
