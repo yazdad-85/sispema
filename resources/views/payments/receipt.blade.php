@@ -377,16 +377,31 @@
                             }
                             $effectiveYearly = max(0, $baseYearlyAmount - $discountAmount);
 
-                            $months = ['JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER', 'JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI'];
+                            // Check if student is graduated
+                            $isGraduated = $payment->student->status === 'graduated' || 
+                                         (optional($payment->student->classRoom)->level === 'Graduated') ||
+                                         (optional($payment->student->classRoom)->level === 'XII');
                             
-                            // Gunakan smart distribution berdasarkan effectiveYearly agar sama dengan detail
-                            $smart = \App\Models\FeeStructure::calculateSmartMonthlyDistribution($effectiveYearly);
-                            $breakdown = $smart['monthly_breakdown'] ?? [];
-                            $mapReceiptToBreakdown = [
-                                'JULI' => 'Juli', 'AGUSTUS' => 'Agustus', 'SEPTEMBER' => 'September', 'OKTOBER' => 'Oktober',
-                                'NOVEMBER' => 'November', 'DESEMBER' => 'Desember', 'JANUARI' => 'Januari', 'FEBRUARI' => 'Februari',
-                                'MARET' => 'Maret', 'APRIL' => 'April', 'MEI' => 'Mei', 'JUNI' => 'Juni',
-                            ];
+                            // For graduated students, don't use smart billing breakdown
+                            if ($isGraduated) {
+                                // For graduated students, show previous debt directly without monthly breakdown
+                                $graduatedPreviousDebt = (float)($payment->student->previous_debt ?? 0);
+                                $breakdown = []; // No monthly breakdown for graduated students
+                                $months = []; // No months to iterate
+                                $mapReceiptToBreakdown = [];
+                            } else {
+                                // For active students, use smart distribution
+                                $months = ['JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER', 'JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI'];
+                                
+                                // Gunakan smart distribution berdasarkan effectiveYearly agar sama dengan detail
+                                $smart = \App\Models\FeeStructure::calculateSmartMonthlyDistribution($effectiveYearly);
+                                $breakdown = $smart['monthly_breakdown'] ?? [];
+                                $mapReceiptToBreakdown = [
+                                    'JULI' => 'Juli', 'AGUSTUS' => 'Agustus', 'SEPTEMBER' => 'September', 'OKTOBER' => 'Oktober',
+                                    'NOVEMBER' => 'November', 'DESEMBER' => 'Desember', 'JANUARI' => 'Januari', 'FEBRUARI' => 'Februari',
+                                    'MARET' => 'Maret', 'APRIL' => 'April', 'MEI' => 'Mei', 'JUNI' => 'Juni',
+                                ];
+                            }
                             
                             // Get total payments for selected academic year
                             $filterAcademicYearId = $selectedAcademicYear ? $selectedAcademicYear->id : $payment->student->academic_year_id;
@@ -538,37 +553,84 @@
                         </tr>
                         @endif
                         
-                        @foreach($months as $month)
-                            @php
-                                $data = $monthlyData[$month];
-                            @endphp
-                            <tr>
-                                <td class="month">{{ $month }}</td>
-                                <td class="amount">{{ number_format($data['required'], 0, ',', '.') }}</td>
+                        @if($isGraduated)
+                            {{-- For graduated students, show previous debt directly without monthly breakdown --}}
+                            @if($graduatedPreviousDebt > 0)
+                            <tr class="previous-debt-row">
+                                <td class="month"><strong>KEKURANGAN SEBELUMNYA ({{ $payment->student->previous_debt_year ?? 'Tahun Sebelumnya' }})</strong></td>
+                                <td class="amount"><strong>{{ number_format($graduatedPreviousDebt, 0, ',', '.') }}</strong></td>
                                 <td class="amount">
-                                    @if($data['paid'] > 0)
-                                        {{ number_format($data['paid'], 0, ',', '.') }}
+                                    @php
+                                        $graduatedPaid = $payment->student->payments
+                                            ->whereIn('status', ['verified', 'completed'])
+                                            ->whereHas('billingRecord', function($query) use ($payment) {
+                                                $query->where('student_id', $payment->student_id);
+                                            })
+                                            ->sum('total_amount');
+                                        $graduatedPaidPrev = min($graduatedPaid, $graduatedPreviousDebt);
+                                    @endphp
+                                    @if($graduatedPaidPrev > 0)
+                                        {{ number_format($graduatedPaidPrev, 0, ',', '.') }}
                                     @endif
                                 </td>
-                                <td class="amount">{{ number_format($data['remaining'], 0, ',', '.') }}</td>
+                                <td class="amount">{{ number_format(max(0, $graduatedPreviousDebt - $graduatedPaidPrev), 0, ',', '.') }}</td>
                                 <td class="status">
-                                    @if($data['isPaid'])
+                                    @if($graduatedPreviousDebt - $graduatedPaidPrev <= 0)
                                         LUNAS
+                                    @else
+                                        BELUM LUNAS
                                     @endif
                                 </td>
                             </tr>
-                        @endforeach
+                            @endif
+                        @else
+                            {{-- For active students, show monthly breakdown --}}
+                            @foreach($months as $month)
+                                @php
+                                    $data = $monthlyData[$month];
+                                @endphp
+                                <tr>
+                                    <td class="month">{{ $month }}</td>
+                                    <td class="amount">{{ number_format($data['required'], 0, ',', '.') }}</td>
+                                    <td class="amount">
+                                        @if($data['paid'] > 0)
+                                            {{ number_format($data['paid'], 0, ',', '.') }}
+                                        @endif
+                                    </td>
+                                    <td class="amount">{{ number_format($data['remaining'], 0, ',', '.') }}</td>
+                                    <td class="status">
+                                        @if($data['isPaid'])
+                                            LUNAS
+                                        @endif
+                                    </td>
+                                </tr>
+                            @endforeach
+                        @endif
                         
                         <!-- Total Row -->
-                        @php
-                            $totalRequired = $effectiveYearly + $previousDebt;
-                            // Calculate total remaining directly to avoid rounding errors
-                            $totalRemaining = $totalRequired - $totalPayments;
-                        @endphp
+                        @if($isGraduated)
+                            @php
+                                $graduatedPaid = $payment->student->payments
+                                    ->whereIn('status', ['verified', 'completed'])
+                                    ->whereHas('billingRecord', function($query) use ($payment) {
+                                        $query->where('student_id', $payment->student_id);
+                                    })
+                                    ->sum('total_amount');
+                                $graduatedPaidPrev = min($graduatedPaid, $graduatedPreviousDebt);
+                                $totalRequired = $graduatedPreviousDebt;
+                                $totalRemaining = max(0, $graduatedPreviousDebt - $graduatedPaidPrev);
+                            @endphp
+                        @else
+                            @php
+                                $totalRequired = $effectiveYearly + $previousDebt;
+                                // Calculate total remaining directly to avoid rounding errors
+                                $totalRemaining = $totalRequired - $totalPayments;
+                            @endphp
+                        @endif
                         <tr class="total-row">
                             <td class="month"><strong>JUMLAH</strong></td>
                             <td class="amount"><strong>{{ number_format($totalRequired, 0, ',', '.') }}</strong></td>
-                            <td class="amount"><strong>{{ number_format($totalPayments, 0, ',', '.') }}</strong></td>
+                            <td class="amount"><strong>{{ number_format($isGraduated ? $graduatedPaidPrev : $totalPayments, 0, ',', '.') }}</strong></td>
                             <td class="amount"><strong>{{ number_format($totalRemaining, 0, ',', '.') }}</strong></td>
                             <td class="status"></td>
                         </tr>
